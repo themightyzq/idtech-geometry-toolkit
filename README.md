@@ -37,7 +37,7 @@ A PyQt5 desktop application for generating brush geometry for idTech engines (Qu
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/idtech-geometry-toolkit.git
+git clone https://github.com/themightyzq/idtech-geometry-toolkit.git
 cd idtech-geometry-toolkit
 
 # Create virtual environment
