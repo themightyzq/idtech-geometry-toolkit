@@ -1,0 +1,22 @@
+# Quake Level Generator - Python Dependencies
+
+# GUI Framework
+PyQt5>=5.15.0
+
+# OpenGL support for 3D preview
+PyOpenGL>=3.1.0
+
+# Testing Framework
+pytest>=7.0.0
+
+# Data Classes and JSON handling
+dataclasses-json>=0.5.7
+
+# Type hints support
+typing-extensions>=4.0.0
+
+# Numerical computing (for 3D preview and geometry)
+numpy>=1.21.0
+
+# Image loading for textured preview
+Pillow>=9.0.0

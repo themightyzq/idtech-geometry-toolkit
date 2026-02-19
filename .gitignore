@@ -1,0 +1,157 @@
+# idTech Geometry Toolkit - Release .gitignore
+# This file excludes development artifacts from the public repository
+
+# =============================================================================
+# Python
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =============================================================================
+# Testing (excluded from release)
+# =============================================================================
+tests/
+pytest.ini
+conftest.py
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# =============================================================================
+# AI / Development Files (excluded from release)
+# =============================================================================
+CLAUDE.md
+.claude/
+.agent-os/
+.github/
+docs/
+_archive/
+examples/
+qa_artifacts/
+tools/
+
+# Development scripts
+build_and_test.sh
+module_lint.py
+validate_pillar_geometry.py
+test_launch.py
+test_map_format_validation_agent.py
+
+# Internal reports
+*_REPORT.md
+*_VALIDATION_REPORT.md
+*_AUDIT_*.md
+CLEANUP_REPORT.md
+TODO.md
+
+# =============================================================================
+# Generated Output
+# =============================================================================
+output/
+artifacts/
+*.map
+*.bsp
+*.lit
+*.pts
+*.prt
+*.log
+layout.json
+test_layout_output.map
+
+# =============================================================================
+# Configuration (user-specific)
+# =============================================================================
+config/
+engine/
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# OS Generated
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.directory
+
+# =============================================================================
+# Miscellaneous
+# =============================================================================
+*.bak
+*.tmp
+*.temp
+.cache/
+test_results/
+.benchmarks/
