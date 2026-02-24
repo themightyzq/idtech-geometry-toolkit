@@ -51,7 +51,7 @@ class LayoutPanel(QWidget):
         super().__init__(parent)
         
         # Settings for persistent parameter values
-        self.settings = QSettings("idTechMapGenerator", "Parameters")
+        self.settings = QSettings("idTechGeometryToolkit", "Parameters")
         
         # Parameter storage
         self.parameters = {}
@@ -420,23 +420,26 @@ class LayoutPanel(QWidget):
                       "Export debug graph visualization")
         layout.addWidget(self.export_graph_check)
 
-        # Seed control
+        # Seed control with fixed/random toggle
         seed_layout = QHBoxLayout()
-        seed_label = QLabel("Seed:")
-        seed_label.setMinimumWidth(70)
-        seed_layout.addWidget(seed_label)
+        self.fixed_seed_check = SafeCheckBox("Fixed Seed")
+        self.fixed_seed_check.setToolTip("When unchecked, each generation uses a random seed")
+        set_accessible(self.fixed_seed_check, "Fixed Seed",
+                      "Enable to use a specific seed for reproducible generation")
+        seed_layout.addWidget(self.fixed_seed_check)
 
         self.seed_spinbox = QSpinBox()
         self.seed_spinbox.setRange(0, 2147483647)
-        self.seed_spinbox.setSpecialValueText("Random")
-        self.seed_spinbox.setValue(0)  # 0 = random
+        self.seed_spinbox.setValue(0)
         self.seed_spinbox.setMinimumWidth(120)
-        self.seed_spinbox.setToolTip("Set to 0 for random seed, or enter a value for reproducible generation")
-        set_accessible(self.seed_spinbox, "Random Seed",
-                      "Set to 0 for random seed, or enter a value for reproducible generation")
+        self.seed_spinbox.setEnabled(False)  # Disabled by default (random mode)
+        self.seed_spinbox.setToolTip("Seed value for reproducible generation")
+        set_accessible(self.seed_spinbox, "Seed Value",
+                      "Enter a seed value for reproducible generation")
         seed_layout.addWidget(self.seed_spinbox)
         seed_layout.addStretch()
 
+        self.fixed_seed_check.toggled.connect(self._on_fixed_seed_toggled)
         layout.addLayout(seed_layout)
 
         # Connect signals
@@ -464,14 +467,17 @@ class LayoutPanel(QWidget):
         preset_layout = QHBoxLayout()
         
         small_btn = QPushButton("Small")
+        small_btn.setToolTip("Small: 20x20 map, 8 rooms, complexity 3, 64-wide corridors")
         small_btn.clicked.connect(lambda: self._apply_preset("small"))
         preset_layout.addWidget(small_btn)
-        
+
         medium_btn = QPushButton("Medium")
+        medium_btn.setToolTip("Medium: 40x40 map, 20 rooms, complexity 5, 96-wide corridors")
         medium_btn.clicked.connect(lambda: self._apply_preset("medium"))
         preset_layout.addWidget(medium_btn)
-        
+
         large_btn = QPushButton("Large")
+        large_btn.setToolTip("Large: 80x80 map, 40 rooms, complexity 8, 128-wide corridors")
         large_btn.clicked.connect(lambda: self._apply_preset("large"))
         preset_layout.addWidget(large_btn)
         
@@ -605,13 +611,21 @@ class LayoutPanel(QWidget):
         self.secret_spinbox.setValue(0)
         self.export_obj_check.setChecked(False)
         self.export_graph_check.setChecked(False)
+        self.fixed_seed_check.setChecked(False)
         self.seed_spinbox.setValue(0)
-        
+
+    def _on_fixed_seed_toggled(self, checked: bool):
+        """Enable/disable seed spinbox based on fixed seed toggle."""
+        self.seed_spinbox.setEnabled(checked)
+        self._on_parameter_changed()
+
     def get_parameters(self) -> Dict[str, Any]:
         """Get the current parameter values."""
-        # Seed: 0 means random (None), otherwise use the value
-        seed_value = self.seed_spinbox.value()
-        seed = None if seed_value == 0 else seed_value
+        # If fixed seed is checked, use the spinbox value; otherwise random (None)
+        if self.fixed_seed_check.isChecked():
+            seed = self.seed_spinbox.value()
+        else:
+            seed = None
 
         return {
             "map_width": self.width_slider.value(),
@@ -650,9 +664,13 @@ class LayoutPanel(QWidget):
         if "export_graph" in parameters:
             self.export_graph_check.setChecked(parameters["export_graph"])
         if "seed" in parameters:
-            # Convert None to 0 for the spinbox
             seed_val = parameters["seed"]
-            self.seed_spinbox.setValue(0 if seed_val is None else seed_val)
+            if seed_val is None:
+                self.fixed_seed_check.setChecked(False)
+                self.seed_spinbox.setValue(0)
+            else:
+                self.fixed_seed_check.setChecked(True)
+                self.seed_spinbox.setValue(seed_val)
 
     def validate_parameters(self) -> bool:
         """Validate the current parameters."""

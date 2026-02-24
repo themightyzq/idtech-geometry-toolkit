@@ -146,12 +146,19 @@ class TagRegistry:
 ROOM_PRIMITIVES_WITH_ENTRANCE = {
     'Tower', 'Storage', 'Prison',
     'Sanctuary', 'Tomb', 'Chamber', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
-    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'SecretChamber'
+    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'SecretChamber',
 }
 
 # Multi-portal rooms that handle alignment via offset parameters instead of systemic correction.
 # These rooms have portals on different walls, so a single whole-room shift can't align all portals.
 MULTI_PORTAL_ROOMS = {'GreatHall', 'Antechamber'}
+
+# Multi-floor rooms - these have entrance at z_level=0 and upper portal at z_level=160.
+# They function as vertical connectors, allowing halls on different floors to connect through them.
+MULTI_FLOOR_ROOMS = {
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+}
 
 # All room primitives (enclosed spaces)
 # Halls are excluded as they are traversal spaces
@@ -159,7 +166,10 @@ ROOM_PRIMITIVES: Set[str] = {
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
     'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
-    'SecretChamber'
+    'SecretChamber',
+    # Multi-Floor Rooms (rooms with internal upper portals and stairs)
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
 }
 
 
@@ -450,6 +460,18 @@ class LayoutGenerator:
         # Run validation gate per CLAUDE.md Section 3 (Quality Gates [BINDING])
         self._run_validation_gate(all_brushes, portal_mismatches)
 
+        # Center the layout at world origin so geometry appears at (0,0,0)
+        # in the 3D preview and exported maps
+        offset_x, offset_y = self._compute_centering_offset()
+        if offset_x != 0 or offset_y != 0:
+            all_brushes = [_translate_brush(b, (offset_x, offset_y, 0))
+                           for b in all_brushes]
+            spawn_position = (
+                spawn_position[0] + offset_x,
+                spawn_position[1] + offset_y,
+                spawn_position[2],
+            )
+
         return GenerationResult(
             brushes=all_brushes,
             spawn_position=spawn_position,
@@ -506,6 +528,51 @@ class LayoutGenerator:
             pass
         except Exception as e:
             logger.warning(f"Validation gate error: {e}")
+
+    def _compute_centering_offset(self) -> Tuple[float, float]:
+        """Compute a world-space offset that centers the layout at the origin.
+
+        Finds the bounding box of all placed primitives (using their footprints
+        and rotations) and returns the negative of the center so that applying
+        the offset moves the layout center to (0, 0).
+
+        The result is always a multiple of 64 (grid-aligned per CLAUDE.md §4),
+        ensuring all coordinates remain integers.
+        """
+        if not self._layout.primitives:
+            return (0.0, 0.0)
+
+        grid_size = self._layout.grid_size
+        min_cx = float('inf')
+        min_cy = float('inf')
+        max_cx = float('-inf')
+        max_cy = float('-inf')
+
+        for prim in self._layout.primitives.values():
+            footprint = prim.footprint or PRIMITIVE_FOOTPRINTS.get(prim.primitive_type)
+            if footprint:
+                fp_w, fp_d = footprint.rotated_size(prim.rotation)
+            else:
+                fp_w, fp_d = 1, 1
+
+            cx = prim.origin_cell.x
+            cy = prim.origin_cell.y
+            min_cx = min(min_cx, cx)
+            min_cy = min(min_cy, cy)
+            max_cx = max(max_cx, cx + fp_w)
+            max_cy = max(max_cy, cy + fp_d)
+
+        # Center of bounding box in world units.
+        # (min + max) * grid_size / 2 is always a multiple of 64 because
+        # min/max are integers and grid_size is 128.
+        center_x = (min_cx + max_cx) * grid_size / 2.0
+        center_y = (min_cy + max_cy) * grid_size / 2.0
+
+        # Snap to 64-unit grid for safety
+        center_x = round(center_x / 64) * 64
+        center_y = round(center_y / 64) * 64
+
+        return (-center_x, -center_y)
 
     def _build_portal_connections(self) -> Dict[str, Dict[str, Tuple[bool, bool]]]:
         """
@@ -1150,6 +1217,73 @@ class LayoutGenerator:
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
 
+        # === MULTI-FLOOR ROOM PRIMITIVES ===
+        # These rooms have internal upper portals and stairs for vertical gameplay
+
+        elif ptype == 'Amphitheater':
+            # Amphitheater: tiered arena with concentric rings
+            # Footprint: 4x4 cells = 512 x 512 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            set_if_not_user('tier_count', 3)
+            set_if_not_user('shell_sides', 4)  # Square for layout mode
+
+        elif ptype == 'CatwalkChamber':
+            # CatwalkChamber: pit with spanning catwalks
+            # Footprint: 3x3 cells = 384 x 384 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'BalconyRoom':
+            # BalconyRoom: room with elevated balcony
+            # Footprint: 3x4 cells = 384 x 512 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'SunkenChamber':
+            # SunkenChamber: room with lowered central basin
+            # Footprint: 3x3 cells = 384 x 384 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'LibraryArchive':
+            # LibraryArchive: tall room with shelf alcoves
+            # Footprint: 3x4 cells = 384 x 512 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            # Note: alcoves kept at default (alcove_rows cannot be 0 to avoid division by zero)
+
+        elif ptype == 'Grotto':
+            # Grotto: irregular cave with varied floor
+            # Footprint: 3x3 cells = 384 x 384 units
+            # Room t=24 (thicker walls): width = footprint/2 - t, length = footprint - 2*t
+            t = 24  # Grotto uses extra thick walls
+            set_if_not_user('width', (fp_width * grid_size) / 2 - t)
+            set_if_not_user('length', fp_depth * grid_size - 2*t)
+            set_if_not_user('shell_sides', 4)  # Square for layout mode
+
+        elif ptype == 'RadialShrine':
+            # RadialShrine: shrine with radiating alcoves
+            # Footprint: 4x4 cells = 512 x 512 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            set_if_not_user('alcove_count', 0)  # Disable radiating alcoves in layout mode
+            set_if_not_user('shell_sides', 4)  # Square for layout mode
+
+        elif ptype == 'Forge':
+            # Forge: multi-tier industrial room
+            # Footprint: 3x3 cells = 384 x 384 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            set_if_not_user('tier_count', 2)
+
         # =====================================================================
         # POLYGONAL ROOM PORTAL TARGET COMPUTATION
         # =====================================================================
@@ -1293,6 +1427,15 @@ class LayoutGenerator:
                 'side_east': 'has_side_east', 'side_west': 'has_side_west'
             },
             'SecretChamber': {'entrance': 'has_entrance'},
+            # Multi-Floor rooms (entrance at z=0, upper portal at z=160 for floor connections)
+            'Amphitheater': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'CatwalkChamber': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'BalconyRoom': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'SunkenChamber': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'LibraryArchive': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'Grotto': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'RadialShrine': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
+            'Forge': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
         }
 
         param_map = portal_param_map.get(prim.primitive_type, {})

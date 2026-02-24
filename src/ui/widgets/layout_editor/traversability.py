@@ -39,6 +39,12 @@ MIN_PORTAL_WIDTH = 32.0      # Player width (bounding box)
 STANDARD_FLOOR_HEIGHT = 128.0  # Standard floor-to-floor height
 HALF_FLOOR_HEIGHT = 64.0       # Half-floor transition
 
+# Multi-floor room types (have internal stairs connecting z_level=0 to z_level=160)
+MULTI_FLOOR_ROOM_TYPES = {
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+}
+
 
 class TraversabilitySeverity(Enum):
     """Severity level for traversability issues."""
@@ -191,6 +197,16 @@ def check_z_traversability(
         if prim_a.primitive_type == 'VerticalStairHall':
             return True, None
         if prim_b.primitive_type == 'VerticalStairHall':
+            return True, None
+
+    # Multi-floor rooms have internal stairs connecting entrance (z=0) to upper (z=160)
+    # They provide vertical traversability like VerticalStairHall
+    if prim_a.primitive_type in MULTI_FLOOR_ROOM_TYPES:
+        # Check if this connection uses the upper portal (different z_level)
+        if connection.portal_a_id == 'upper':
+            return True, None
+    if prim_b.primitive_type in MULTI_FLOOR_ROOM_TYPES:
+        if connection.portal_b_id == 'upper':
             return True, None
 
     # Calculate absolute Z for each portal

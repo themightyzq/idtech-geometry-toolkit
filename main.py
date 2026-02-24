@@ -7,7 +7,53 @@ It initializes the Qt application and launches the main UI.
 """
 
 import sys
+
+# Python version check — must happen before any other imports
+if sys.version_info < (3, 8):
+    print(
+        f"Error: Python 3.8 or later is required (found {sys.version}).\n"
+        "Please upgrade your Python installation.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 import os
+import logging
+import logging.handlers
+from pathlib import Path as _Path
+
+# --- Persistent logging setup (before any other imports) ---
+def _setup_logging():
+    """Configure logging with console + rotating file handler."""
+    log_dir = _Path.home() / ".config" / "quake_levelgenerator" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "toolkit.log"
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    # File handler: rotate at 5MB, keep 3 backups
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)-7s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    root_logger.addHandler(file_handler)
+
+    # Console handler: INFO and above
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(
+        "[%(levelname)s] %(message)s"
+    ))
+    root_logger.addHandler(console_handler)
+
+    logging.info("idTech Geometry Toolkit starting — log file: %s", log_file)
+
+_setup_logging()
 
 # Set Qt environment variables before importing Qt modules.
 # These help with macOS rendering compatibility.
@@ -21,6 +67,27 @@ os.environ['QT_ACCESSIBILITY'] = '0'
 
 print("[MAIN] Starting application...")
 sys.stdout.flush()
+
+# --- Dependency checks (before heavy imports) ---
+try:
+    from PyQt5 import QtCore  # noqa: F401
+except ImportError:
+    print(
+        "Error: PyQt5 is not installed.\n"
+        "Run: pip install -r requirements.txt\n"
+        "(or: pip install PyQt5)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+try:
+    import OpenGL  # noqa: F401
+except ImportError:
+    print(
+        "Warning: PyOpenGL is not installed. 3D preview will be disabled.\n"
+        "Run: pip install PyOpenGL",
+        file=sys.stderr,
+    )
 
 from pathlib import Path
 from PyQt5.QtWidgets import QApplication

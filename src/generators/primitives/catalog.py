@@ -10,10 +10,11 @@ import logging
 from typing import Dict, List, Optional, Type
 
 from .base import GeometricPrimitive
-from .structural import StraightStaircase, Arch, Pillar, Buttress, Battlement
+from .structural import StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement
 from .rooms import (
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
-    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber
+    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber,
+    Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge
 )
 from .connective import Bridge, Platform, Rampart, Gallery
 from .halls import StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, SecretHall
@@ -122,9 +123,10 @@ class PrimitiveCatalog:
 PRIMITIVE_CATALOG = PrimitiveCatalog()
 
 for _cls in [
-    StraightStaircase, Arch, Pillar, Buttress, Battlement,
+    StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement,
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
     Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber,
+    Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,
     Bridge, Platform, Rampart, Gallery,
     StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, SecretHall,
 ]:

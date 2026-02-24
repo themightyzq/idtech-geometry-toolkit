@@ -20,7 +20,7 @@ from PyQt5.QtGui import (
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
 from .data_model import (
-    DungeonLayout, PlacedPrimitive, CellCoord, PrimitiveFootprint,
+    DungeonLayout, PlacedPrimitive, CellCoord, PrimitiveFootprint, PortalDirection,
 )
 from .cell_item import CellItem, GhostCellItem
 
@@ -40,6 +40,7 @@ class GridCanvas(QGraphicsView):
     primitive_deleted = pyqtSignal(str)  # Emitted with primitive ID when deleted
     status_message = pyqtSignal(str)  # Emitted with status messages for user feedback
     mode_changed = pyqtSignal(bool, str)  # Emitted when mode changes (is_placing, primitive_type)
+    layout_changed = pyqtSignal()  # Emitted when layout is modified directly (e.g. toggle secret)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,6 +88,9 @@ class GridCanvas(QGraphicsView):
         # Flow visualization
         self._show_flow = False
         self._flow_path: list = []  # List of primitive IDs in path order
+
+        # Floor filter (None = show all, or specific z_offset to highlight)
+        self._floor_filter: Optional[float] = None
 
         # Setup view
         self._setup_view()
@@ -259,6 +263,60 @@ class GridCanvas(QGraphicsView):
                 return f"Blocked by {other.primitive_type}"
         return None
 
+    # Multi-floor room types for placement guidance
+    MULTI_FLOOR_ROOM_TYPES = {
+        'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+        'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+    }
+
+    def get_placement_guidance(self, cell: CellCoord, footprint: PrimitiveFootprint,
+                                rotation: int) -> Optional[str]:
+        """Get guidance text for placement near multi-floor room portals.
+
+        Returns helpful hints when placing halls near multi-floor rooms.
+        """
+        if not footprint.portals:
+            return None
+
+        # Get cells that would be occupied by placement
+        cells = set(footprint.occupied_cells(cell, rotation))
+
+        # Check for each portal in the placement footprint
+        for portal in footprint.portals:
+            portal_cell = portal.world_cell(cell, rotation, footprint.width_cells, footprint.depth_cells)
+            portal_dir = portal.rotated_direction(rotation)
+
+            # Check adjacent cell for multi-floor room
+            adj_cell = portal_cell.neighbor(portal_dir)
+            adj_prim = self._layout.get_primitive_at_cell(adj_cell)
+
+            if adj_prim and adj_prim.primitive_type in self.MULTI_FLOOR_ROOM_TYPES:
+                # Found a multi-floor room nearby - give guidance
+                room_footprint = adj_prim.footprint
+                if not room_footprint:
+                    continue
+
+                # Check which portal of the room we're adjacent to
+                for room_portal in room_footprint.portals:
+                    room_portal_cell = adj_prim.get_portal_world_cell(room_portal)
+                    room_portal_dir = room_portal.rotated_direction(adj_prim.rotation)
+
+                    # Check if this portal is adjacent and facing us
+                    if room_portal_cell == adj_cell and room_portal_dir == portal_dir.opposite():
+                        portal_z = adj_prim.z_offset + room_portal.z_level
+                        needed_z = portal_z  # Hall needs this z_offset to connect
+
+                        if room_portal.z_level > 0:
+                            return (f"Near {adj_prim.primitive_type} upper portal (Z:{int(room_portal.z_level)}) - "
+                                    f"Set Z Offset to {int(needed_z)} to connect")
+                        else:
+                            current_z = self._placement_z_offset
+                            if abs(current_z - needed_z) > 2:
+                                return (f"Near {adj_prim.primitive_type} entrance - "
+                                        f"Set Z Offset to {int(needed_z)} to connect (currently {int(current_z)})")
+
+        return None
+
     # ---------------------------------------------------------------
     # Selection
     # ---------------------------------------------------------------
@@ -399,7 +457,6 @@ class GridCanvas(QGraphicsView):
         # Flow path and dead-end markers are optional
         if self._show_flow:
             self._draw_flow_path(painter)
-            self._draw_dead_end_markers(painter)
 
     def _draw_connections(self, painter: QPainter):
         """Draw connection lines between connected portals.
@@ -500,52 +557,6 @@ class GridCanvas(QGraphicsView):
                     painter.setPen(QPen(QColor(0, 0, 0)))
                     painter.drawText(badge_rect, Qt.AlignCenter, str(i + 1))
 
-    def _draw_dead_end_markers(self, painter: QPainter):
-        """Draw warning markers on primitives with only 1 or 0 connections (dead ends)."""
-        # Build connection count for each primitive
-        conn_count: Dict[str, int] = {pid: 0 for pid in self._layout.primitives}
-        for conn in self._layout.connections:
-            if conn.primitive_a_id in conn_count:
-                conn_count[conn.primitive_a_id] += 1
-            if conn.primitive_b_id in conn_count:
-                conn_count[conn.primitive_b_id] += 1
-
-        # Draw markers on dead ends
-        for prim_id, count in conn_count.items():
-            if count <= 1:
-                prim = self._layout.primitives.get(prim_id)
-                if prim:
-                    center = self._get_primitive_center(prim)
-                    if center:
-                        # Draw orange warning triangle in top-right
-                        warn_color = QColor(255, 152, 0)  # Orange
-                        painter.setPen(QPen(warn_color.darker(120), 2))
-                        painter.setBrush(QBrush(warn_color))
-
-                        # Calculate position offset from center
-                        footprint = prim.footprint
-                        if footprint:
-                            w, d = footprint.rotated_size(prim.rotation)
-                            offset_x = (w / 2 - 0.5) * self._cell_size
-                            offset_y = -(d / 2 - 0.5) * self._cell_size
-                        else:
-                            offset_x = self._cell_size * 0.3
-                            offset_y = -self._cell_size * 0.3
-
-                        # Draw warning badge
-                        badge_x = center.x() + offset_x
-                        badge_y = center.y() + offset_y
-                        badge_rect = QRectF(badge_x - 8, badge_y - 8, 16, 16)
-                        painter.drawEllipse(badge_rect)
-
-                        # Draw exclamation mark
-                        painter.setPen(QPen(QColor(0, 0, 0), 2))
-                        font = QFont()
-                        font.setPointSize(10)
-                        font.setBold(True)
-                        painter.setFont(font)
-                        painter.drawText(badge_rect, Qt.AlignCenter, "!")
-
     def _get_primitive_center(self, prim: PlacedPrimitive) -> Optional[QPointF]:
         """Get the scene center point of a primitive."""
         footprint = prim.footprint
@@ -573,6 +584,38 @@ class GridCanvas(QGraphicsView):
     def show_flow(self) -> bool:
         """Check if flow visualization is enabled."""
         return self._show_flow
+
+    def set_floor_filter(self, z_offset: Optional[float]):
+        """Set floor filter to highlight primitives at a specific z_offset.
+
+        Args:
+            z_offset: Z-offset to highlight, or None to show all floors equally
+        """
+        self._floor_filter = z_offset
+        # Update all cell items with new filter state
+        for item in self._cell_items.values():
+            if z_offset is None:
+                item.set_floor_dimmed(False)
+            else:
+                # Dim items not on the selected floor
+                item.set_floor_dimmed(abs(item.primitive.z_offset - z_offset) > 2)
+        self.viewport().update()
+
+    @property
+    def floor_filter(self) -> Optional[float]:
+        """Get current floor filter value."""
+        return self._floor_filter
+
+    def get_floor_levels(self) -> list:
+        """Get sorted list of unique z_offset values in the layout.
+
+        Returns:
+            List of z_offset values, sorted ascending
+        """
+        if not self._layout.primitives:
+            return [0.0]
+        levels = sorted(set(p.z_offset for p in self._layout.primitives.values()))
+        return levels if levels else [0.0]
 
     def _calculate_flow_path(self):
         """Calculate the critical path through the layout using BFS."""
@@ -805,21 +848,33 @@ class GridCanvas(QGraphicsView):
 
         # Update ghost item position for placement mode
         if self._ghost_item and self.is_placing:
-            # Position ghost at cell (using footprint-aware positioning to match CellItem)
-            ghost_pos = self._cell_to_scene_for_footprint(
+            # Try snap-to-portal for preview (shows where placement will actually happen)
+            snapped_cell = self._snap_to_portal_connection(
                 cell, self._placement_footprint, self._placement_rotation
+            )
+
+            # Position ghost at snapped cell (shows actual placement position)
+            ghost_pos = self._cell_to_scene_for_footprint(
+                snapped_cell, self._placement_footprint, self._placement_rotation
             )
             self._ghost_item.setPos(ghost_pos)
             self._ghost_item.setVisible(True)
 
-            # Check validity
+            # Check validity at snapped position
             valid = self._layout.can_place_at(
-                self._placement_footprint, cell, self._placement_rotation
+                self._placement_footprint, snapped_cell, self._placement_rotation
             )
             self._ghost_item.set_valid(valid)
 
-            # Emit hover signal
-            self.cell_hovered.emit(cell.x, cell.y)
+            # Check for placement guidance near multi-floor rooms
+            guidance = self.get_placement_guidance(
+                snapped_cell, self._placement_footprint, self._placement_rotation
+            )
+            if guidance:
+                self.status_message.emit(guidance)
+
+            # Emit hover signal with snapped position
+            self.cell_hovered.emit(snapped_cell.x, snapped_cell.y)
 
         super().mouseMoveEvent(event)
 
@@ -867,6 +922,16 @@ class GridCanvas(QGraphicsView):
             elif self._selected_id:
                 # Rotate selected primitive by 90 degrees
                 self._rotate_selected()
+            event.accept()
+            return
+
+        if key == Qt.Key_F:
+            self.fit_to_content()
+            event.accept()
+            return
+
+        if key == Qt.Key_G:
+            self.focus_on_selected()
             event.accept()
             return
 
@@ -956,18 +1021,174 @@ class GridCanvas(QGraphicsView):
     # Placement
     # ---------------------------------------------------------------
 
+    def _count_potential_connections(self, cell: CellCoord, footprint: PrimitiveFootprint,
+                                       rotation: int) -> int:
+        """Count how many portal connections would be created at this position.
+
+        Args:
+            cell: The target cell for placement
+            footprint: Footprint of the primitive being placed
+            rotation: Rotation angle for placement
+
+        Returns:
+            Number of portals that would connect to adjacent primitives
+        """
+        count = 0
+        for portal in footprint.portals:
+            portal_cell = portal.world_cell(cell, rotation, footprint.width_cells, footprint.depth_cells)
+            portal_dir = portal.rotated_direction(rotation)
+
+            # Check adjacent cell
+            adjacent_cell = portal_cell.neighbor(portal_dir)
+            adjacent_prim = self._layout.get_primitive_at_cell(adjacent_cell)
+
+            if adjacent_prim is None:
+                continue
+
+            adj_footprint = adjacent_prim.footprint
+            if not adj_footprint:
+                continue
+
+            # Check if adjacent primitive has a matching portal
+            opposite_dir = portal_dir.opposite()
+            for adj_portal in adj_footprint.portals:
+                adj_portal_dir = adj_portal.rotated_direction(adjacent_prim.rotation)
+                if adj_portal_dir != opposite_dir:
+                    continue
+
+                if not adjacent_prim.is_portal_enabled(adj_portal.id):
+                    continue
+
+                adj_portal_cell = adjacent_prim.get_portal_world_cell(adj_portal)
+                if adj_portal_cell == adjacent_cell:
+                    # Found a matching portal - connection would be created
+                    count += 1
+                    break  # One connection per portal max
+
+        return count
+
+    def _snap_to_portal_connection(self, cell: CellCoord, footprint: PrimitiveFootprint,
+                                     rotation: int, emit_message: bool = False) -> CellCoord:
+        """Snap placement position to maximize portal connections.
+
+        When placing a hall adjacent to a large room (like multi-floor rooms), this
+        finds the optimal position that creates valid portal connections. This makes
+        the workflow identical for all module types - users just place adjacent and
+        connections happen automatically.
+
+        The algorithm chooses the position that creates the MOST connections,
+        preferring the original position if connection counts are equal.
+
+        Args:
+            cell: The original target cell
+            footprint: Footprint of the primitive being placed
+            rotation: Rotation angle for placement
+            emit_message: If True, emit status message when snap occurs (for actual placement)
+
+        Returns:
+            Adjusted cell position, or original if no better snap found
+        """
+        if not footprint.portals:
+            return cell
+
+        # Count connections at original position
+        original_connections = self._count_potential_connections(cell, footprint, rotation)
+
+        best_snap = cell
+        best_connection_count = original_connections
+        snap_target_info = None
+
+        # For each portal on the primitive we're placing, look for snap opportunities
+        for portal in footprint.portals:
+            portal_cell = portal.world_cell(cell, rotation, footprint.width_cells, footprint.depth_cells)
+            portal_dir = portal.rotated_direction(rotation)
+
+            # Look at the adjacent cell in the portal's direction
+            adjacent_cell = portal_cell.neighbor(portal_dir)
+            adjacent_prim = self._layout.get_primitive_at_cell(adjacent_cell)
+
+            if adjacent_prim is None:
+                continue
+
+            # Check if this primitive has any portal that faces back toward us
+            adj_footprint = adjacent_prim.footprint
+            if not adj_footprint:
+                continue
+
+            # Find portals on the adjacent primitive that face our direction
+            opposite_dir = portal_dir.opposite()
+            for adj_portal in adj_footprint.portals:
+                adj_portal_dir = adj_portal.rotated_direction(adjacent_prim.rotation)
+                if adj_portal_dir != opposite_dir:
+                    continue
+
+                # This portal faces us - check if it's enabled
+                if not adjacent_prim.is_portal_enabled(adj_portal.id):
+                    continue
+
+                # Get the world cell of this portal
+                adj_portal_cell = adjacent_prim.get_portal_world_cell(adj_portal)
+
+                # If already aligned, no snap needed for this portal
+                if adj_portal_cell == adjacent_cell:
+                    continue
+
+                # The portal is on the same edge but different cell
+                # Calculate the offset needed to align our portal with theirs
+                if portal_dir in (PortalDirection.NORTH, PortalDirection.SOUTH):
+                    # Moving along X axis to align
+                    delta_x = adj_portal_cell.x - portal_cell.x
+                    snap_cell = CellCoord(cell.x + delta_x, cell.y)
+                else:
+                    # Moving along Y axis to align
+                    delta_y = adj_portal_cell.y - portal_cell.y
+                    snap_cell = CellCoord(cell.x, cell.y + delta_y)
+
+                # Check if the snapped position is valid (no collision)
+                if not self._layout.can_place_at(footprint, snap_cell, rotation):
+                    continue
+
+                # Verify this snap creates a connection
+                new_portal_cell = portal.world_cell(
+                    snap_cell, rotation, footprint.width_cells, footprint.depth_cells
+                )
+                if new_portal_cell.neighbor(portal_dir) != adj_portal_cell:
+                    continue
+
+                # Count connections at snapped position
+                snap_connections = self._count_potential_connections(snap_cell, footprint, rotation)
+
+                # Choose snap only if it creates MORE connections than original
+                if snap_connections > best_connection_count:
+                    best_snap = snap_cell
+                    best_connection_count = snap_connections
+                    snap_target_info = (adjacent_prim.primitive_type, adj_portal.id)
+
+        # Emit message if we snapped and created more connections
+        if best_snap != cell and emit_message and snap_target_info:
+            self.status_message.emit(
+                f"Auto-aligned to {snap_target_info[0]} {snap_target_info[1]} portal"
+            )
+
+        return best_snap
+
     def _place_at_cell(self, cell: CellCoord):
         """Attempt to place the current primitive at a cell."""
         if not self.is_placing or self._placement_footprint is None:
             return
 
-        # Check validity
+        # Try to snap to portal connections with nearby modules
+        snapped_cell = self._snap_to_portal_connection(
+            cell, self._placement_footprint, self._placement_rotation, emit_message=True
+        )
+
+        # Check validity at the (possibly snapped) position
         if not self._layout.can_place_at(
-            self._placement_footprint, cell, self._placement_rotation
+            self._placement_footprint, snapped_cell, self._placement_rotation
         ):
             # Emit detailed failure message
             blocker = self.get_placement_blocker(
-                cell, self._placement_footprint, self._placement_rotation
+                snapped_cell, self._placement_footprint, self._placement_rotation
             )
             if blocker:
                 self.status_message.emit(f"Cannot place: {blocker}")
@@ -975,12 +1196,12 @@ class GridCanvas(QGraphicsView):
                 self.status_message.emit("Cannot place at this location")
             return
 
-        # Emit command for placement
+        # Emit command for placement using the snapped position
         from .commands import PlacePrimitiveCommand
         cmd = PlacePrimitiveCommand(
             primitive_type=self._placement_type,
-            origin_x=cell.x,
-            origin_y=cell.y,
+            origin_x=snapped_cell.x,
+            origin_y=snapped_cell.y,
             rotation=self._placement_rotation,
             z_offset=self._placement_z_offset,
             footprint=self._placement_footprint,
@@ -1033,6 +1254,21 @@ class GridCanvas(QGraphicsView):
             items_rect.adjust(-padding, -padding, padding, padding)
             self.fitInView(items_rect, Qt.KeepAspectRatio)
             self._zoom = self.transform().m11()
+
+    def focus_on_selected(self):
+        """Center and zoom the view to the selected primitive, or fit all if none selected."""
+        if not self._selected_id or self._selected_id not in self._cell_items:
+            self.fit_to_content()
+            return
+
+        item = self._cell_items[self._selected_id]
+        item_rect = item.mapRectToScene(item.boundingRect())
+
+        # Add padding (2 cells around the primitive)
+        padding = self._cell_size * 2
+        item_rect.adjust(-padding, -padding, padding, padding)
+        self.fitInView(item_rect, Qt.KeepAspectRatio)
+        self._zoom = self.transform().m11()
 
     def leaveEvent(self, event):
         """Handle mouse leaving the widget."""

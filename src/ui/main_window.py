@@ -13,16 +13,19 @@ from PyQt5.QtWidgets import (
     QTextEdit, QProgressBar, QMessageBox, QLineEdit,
     QSplitter, QStackedWidget, QScrollArea,
     QShortcut, QTabWidget, QMenu, QAction, QMenuBar,
+    QFileDialog, QApplication,
 )
 from quake_levelgenerator.src.ui.safe_combobox import SafeComboBox
 
 # Alias for compatibility - click to cycle, no dropdown
 QComboBox = SafeComboBox
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt5.QtGui import QKeySequence
 from typing import Optional, List
 import json
+import logging
 import os
+import traceback
 from pathlib import Path
 
 from quake_levelgenerator.src.pipeline.automated_pipeline import (
@@ -32,7 +35,7 @@ from quake_levelgenerator.src.pipeline.automated_pipeline import (
 from quake_levelgenerator.src.ui.widgets.mode_selector import ModeSelector
 from quake_levelgenerator.src.ui.widgets.primitive_panel import PrimitivePanel
 from quake_levelgenerator.src.ui.widgets.layout_panel import LayoutPanel
-from quake_levelgenerator.src.ui.preview import PreviewWidget
+from quake_levelgenerator.src.ui.preview import PreviewWidget, QuadViewWidget
 from quake_levelgenerator.src.ui.widgets.layout_editor import LayoutEditorWidget
 from quake_levelgenerator.src.ui.widgets.layout_editor.layout_generator import generate_from_layout
 from quake_levelgenerator.src.ui.widgets.layout_editor.validation_panel import ValidationPanel
@@ -73,7 +76,11 @@ class GenerationThread(QThread):
             else:
                 self.generation_failed.emit("\n".join(result.errors))
         except Exception as e:
-            self.generation_failed.emit(str(e))
+            full_trace = traceback.format_exc()
+            logger = logging.getLogger(__name__)
+            logger.error("Generation failed:\n%s", full_trace)
+            # Emit both the user-friendly summary and full trace separated by marker
+            self.generation_failed.emit(f"{e}\n---TRACEBACK---\n{full_trace}")
 
     def cancel_generation(self):
         self.is_cancelled = True
@@ -102,6 +109,7 @@ class MainWindow(QMainWindow):
         self._settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
         self._recent_files: List[str] = []
         self._recent_files_menu: Optional[QMenu] = None
+        self._pending_quad_view_sync = False
         self._load_settings()
 
         self._setup_ui()
@@ -111,11 +119,26 @@ class MainWindow(QMainWindow):
         # Restore window geometry and splitter sizes
         self._restore_geometry()
 
+        # Auto-save timer (every 5 minutes when dirty)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._auto_save_layout)
+        self._autosave_timer.start(5 * 60 * 1000)  # 5 minutes
+
+        # Check for crash recovery on startup
+        self._check_autosave_recovery()
+
         # Start in primitive mode with preview
         self.mode_selector.set_mode("primitive")
         self._on_mode_changed("primitive")
         # NOTE: Do NOT trigger preview here - OpenGL context isn't ready yet.
         # Preview will update automatically on first parameter change.
+
+        # Now that mode is initialized, sync quad view if it was restored from settings
+        if hasattr(self, '_pending_quad_view_sync') and self._pending_quad_view_sync:
+            self._pending_quad_view_sync = False
+            # Set the center stack to quad view and sync appropriate content
+            self._center_stack.setCurrentIndex(2)
+            self._sync_mesh_to_quad_view()
 
         # Show first-run onboarding if needed
         self._check_first_run()
@@ -294,11 +317,34 @@ class MainWindow(QMainWindow):
         self.layout_editor = LayoutEditorWidget()
         self._center_stack.addWidget(self.layout_editor)
 
-        # Index 1: Preview widget (for Primitive mode)
-        self.preview_widget = PreviewWidget()
+        # Index 1: Preview widget (for Primitive mode - single view)
+        try:
+            self.preview_widget = PreviewWidget()
+            self._opengl_available = True
+        except Exception as e:
+            logging.getLogger(__name__).warning("OpenGL preview unavailable: %s", e)
+            self.preview_widget = QWidget()
+            fallback = QLabel("3D Preview unavailable\n(OpenGL not supported on this system)")
+            fallback.setAlignment(Qt.AlignCenter)
+            fallback.setStyleSheet("color: #888; font-size: 14pt;")
+            fl = QVBoxLayout(self.preview_widget)
+            fl.addWidget(fallback)
+            self._opengl_available = False
         self._center_stack.addWidget(self.preview_widget)
 
-        # Start in primitive mode (index 1)
+        # Index 2: Quad-view widget (for Primitive mode - quad view)
+        try:
+            self._quad_view_widget = QuadViewWidget()
+        except Exception as e:
+            logging.getLogger(__name__).warning("Quad view unavailable: %s", e)
+            self._quad_view_widget = QWidget()
+            self._opengl_available = False
+        self._center_stack.addWidget(self._quad_view_widget)
+
+        # Track quad-view state
+        self._quad_view_enabled = False
+
+        # Start in primitive mode (index 1 = single preview)
         self._center_stack.setCurrentIndex(1)
 
         self.main_splitter.addWidget(self._center_stack)
@@ -353,7 +399,22 @@ class MainWindow(QMainWindow):
                 color: {sc.TEXT_PRIMARY};
             }}
         """)
+        # Copy log button
+        log_btn_row = QHBoxLayout()
+        log_btn_row.addStretch()
+        copy_log_btn = QPushButton("Copy Log")
+        copy_log_btn.setToolTip("Copy log contents to clipboard")
+        copy_log_btn.setFixedWidth(80)
+        copy_log_btn.clicked.connect(self._on_copy_log)
+        log_btn_row.addWidget(copy_log_btn)
+        clear_log_btn = QPushButton("Clear")
+        clear_log_btn.setToolTip("Clear log contents")
+        clear_log_btn.setFixedWidth(60)
+        clear_log_btn.clicked.connect(self.log_text.clear)
+        log_btn_row.addWidget(clear_log_btn)
+
         log_layout.addWidget(self.log_text)
+        log_layout.addLayout(log_btn_row)
         self.right_tabs.addTab(log_widget, "Log")
 
         # Help tab with camera controls
@@ -388,7 +449,19 @@ class MainWindow(QMainWindow):
 <tr><td><b>Ctrl+R</b></td><td>Generate random dungeon (Layout mode)</td></tr>
 <tr><td><b>Ctrl+E</b></td><td>Export .map file</td></tr>
 <tr><td><b>Ctrl+O</b></td><td>Open output folder</td></tr>
+<tr><td><b>Ctrl+1</b></td><td>Switch to Layout mode</td></tr>
+<tr><td><b>Ctrl+2</b></td><td>Switch to Module mode</td></tr>
 <tr><td><b>Escape</b></td><td>Cancel generation</td></tr>
+</table>
+
+<h3>Quad View (Both Modes)</h3>
+<table>
+<tr><td><b>Shift+Q</b></td><td>Toggle quad-view</td></tr>
+<tr><td><b>Alt+7</b></td><td>Maximize Top (XY) view</td></tr>
+<tr><td><b>Alt+1</b></td><td>Maximize Front (XZ) view</td></tr>
+<tr><td><b>Alt+3</b></td><td>Maximize Side (YZ) view</td></tr>
+<tr><td><b>Alt+0</b></td><td>Maximize 3D view</td></tr>
+<tr><td><b>Escape</b></td><td>Restore quad-view</td></tr>
 </table>
         """)
         help_text.setWordWrap(True)
@@ -401,6 +474,10 @@ class MainWindow(QMainWindow):
         self._validation_panel = ValidationPanel()
         self._validation_panel.issue_clicked.connect(self._on_validation_issue_clicked)
         self.right_tabs.addTab(self._validation_panel, "Validation")
+
+        # Track tab notification state
+        self._tab_has_new_content = {0: False, 2: False}  # Log=0, Validation=2
+        self.right_tabs.currentChanged.connect(self._on_right_tab_changed)
 
         right_layout.addWidget(self.right_tabs)
         self.main_splitter.addWidget(right)
@@ -488,6 +565,15 @@ class MainWindow(QMainWindow):
         export_obj_action.triggered.connect(self._on_export_obj)
         file_menu.addAction(export_obj_action)
 
+        file_menu.addSeparator()
+
+        # Quit
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut(QKeySequence.Quit)
+        quit_action.setToolTip("Quit the application")
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
         # Edit menu
         edit_menu = menu_bar.addMenu("&Edit")
 
@@ -552,6 +638,46 @@ class MainWindow(QMainWindow):
         self._preview_3d_action.toggled.connect(self._on_3d_preview_toggled)
         view_menu.addAction(self._preview_3d_action)
 
+        # Floor Filter submenu (Layout mode)
+        self._floor_filter_menu = view_menu.addMenu("Floor &Filter")
+        self._floor_filter_menu.setToolTip("Highlight primitives on a specific floor level")
+        self._floor_filter_menu.setEnabled(False)
+
+        # Create floor filter actions with action group for exclusive selection
+        from PyQt5.QtWidgets import QActionGroup
+        self._floor_filter_group = QActionGroup(self)
+        self._floor_filter_group.setExclusive(True)
+
+        # Show All (default)
+        self._floor_all_action = SafeMenuAction("Show &All Floors", self)
+        self._floor_all_action.setChecked(True)
+        self._floor_all_action.triggered.connect(lambda: self._on_floor_filter_changed(None))
+        self._floor_filter_group.addAction(self._floor_all_action)
+        self._floor_filter_menu.addAction(self._floor_all_action)
+
+        self._floor_filter_menu.addSeparator()
+
+        # Standard floor levels
+        self._floor_basement_action = SafeMenuAction("&Basement (Z:-128)", self)
+        self._floor_basement_action.triggered.connect(lambda: self._on_floor_filter_changed(-128.0))
+        self._floor_filter_group.addAction(self._floor_basement_action)
+        self._floor_filter_menu.addAction(self._floor_basement_action)
+
+        self._floor_ground_action = SafeMenuAction("&Ground (Z:0)", self)
+        self._floor_ground_action.triggered.connect(lambda: self._on_floor_filter_changed(0.0))
+        self._floor_filter_group.addAction(self._floor_ground_action)
+        self._floor_filter_menu.addAction(self._floor_ground_action)
+
+        self._floor_upper_action = SafeMenuAction("&Upper (Z:160)", self)
+        self._floor_upper_action.triggered.connect(lambda: self._on_floor_filter_changed(160.0))
+        self._floor_filter_group.addAction(self._floor_upper_action)
+        self._floor_filter_menu.addAction(self._floor_upper_action)
+
+        self._floor_tower_action = SafeMenuAction("&Tower (Z:320)", self)
+        self._floor_tower_action.triggered.connect(lambda: self._on_floor_filter_changed(320.0))
+        self._floor_filter_group.addAction(self._floor_tower_action)
+        self._floor_filter_menu.addAction(self._floor_tower_action)
+
         view_menu.addSeparator()
 
         # Zoom In (Layout mode)
@@ -584,6 +710,45 @@ class MainWindow(QMainWindow):
         self._reset_view_action.setEnabled(False)
         self._reset_view_action.triggered.connect(self._on_reset_view)
         view_menu.addAction(self._reset_view_action)
+
+        view_menu.addSeparator()
+
+        # Quad View toggle (Module mode)
+        self._quad_view_action = SafeMenuAction("&Quad View", self)
+        self._quad_view_action.setShortcut("Shift+Q")
+        self._quad_view_action.setToolTip("Toggle quad-view with orthographic views to see Z-levels (Shift+Q)")
+        self._quad_view_action.setEnabled(True)  # Available in both Layout and Module modes
+        self._quad_view_action.toggled.connect(self._on_quad_view_toggled)
+        view_menu.addAction(self._quad_view_action)
+
+        # Maximize Pane submenu (for quad-view)
+        # Note: Menu starts enabled because shortcuts are application-wide via QShortcut
+        self._maximize_pane_menu = view_menu.addMenu("&Maximize Pane")
+        self._maximize_pane_menu.setToolTip("Maximize a single pane in quad-view")
+        self._maximize_pane_menu.setEnabled(False)
+
+        # Use Alt+number to avoid conflicts with 3D view presets (1-6)
+        self._maximize_top_action = QAction("&Top (XY) - Alt+7", self)
+        self._maximize_top_action.triggered.connect(lambda: self._on_maximize_pane("top"))
+        self._maximize_pane_menu.addAction(self._maximize_top_action)
+
+        self._maximize_front_action = QAction("&Front (XZ) - Alt+1", self)
+        self._maximize_front_action.triggered.connect(lambda: self._on_maximize_pane("front"))
+        self._maximize_pane_menu.addAction(self._maximize_front_action)
+
+        self._maximize_side_action = QAction("&Side (YZ) - Alt+3", self)
+        self._maximize_side_action.triggered.connect(lambda: self._on_maximize_pane("side"))
+        self._maximize_pane_menu.addAction(self._maximize_side_action)
+
+        self._maximize_3d_action = QAction("&3D Perspective - Alt+0", self)
+        self._maximize_3d_action.triggered.connect(lambda: self._on_maximize_pane("3d"))
+        self._maximize_pane_menu.addAction(self._maximize_3d_action)
+
+        self._maximize_pane_menu.addSeparator()
+
+        self._restore_quad_action = QAction("&Restore Quad View - Escape", self)
+        self._restore_quad_action.triggered.connect(self._on_restore_quad_view)
+        self._maximize_pane_menu.addAction(self._restore_quad_action)
 
         view_menu.addSeparator()
 
@@ -663,7 +828,7 @@ class MainWindow(QMainWindow):
 
     def _on_high_contrast_toggled(self, checked: bool):
         """Handle high-contrast mode toggle (requires restart)."""
-        settings = QSettings('IdTechGeometryToolkit', 'QuakeLevelGenerator')
+        settings = QSettings('idTechGeometryToolkit', 'MainWindow')
         settings.setValue('high_contrast', checked)
 
         QMessageBox.information(
@@ -710,6 +875,24 @@ class MainWindow(QMainWindow):
         """Toggle flow visualization in layout editor."""
         self.layout_editor.set_show_flow(checked)
 
+    def _on_floor_filter_changed(self, z_offset):
+        """Handle floor filter selection change.
+
+        Args:
+            z_offset: Z-offset to filter by, or None to show all floors
+        """
+        self.layout_editor.set_floor_filter(z_offset)
+        if z_offset is None:
+            self.statusBar().showMessage("Floor filter: Showing all floors", 3000)
+        else:
+            floor_name = {
+                -128.0: "Basement",
+                0.0: "Ground",
+                160.0: "Upper",
+                320.0: "Tower",
+            }.get(z_offset, f"Z:{int(z_offset)}")
+            self.statusBar().showMessage(f"Floor filter: {floor_name} (other floors dimmed)", 3000)
+
     def _on_3d_preview_toggled(self, checked: bool):
         """Toggle 3D preview in layout editor."""
         self.layout_editor.set_3d_preview(checked)
@@ -733,6 +916,201 @@ class MainWindow(QMainWindow):
     def _on_show_shortcuts(self):
         """Show keyboard shortcuts help dialog."""
         self.layout_editor.show_shortcuts_help()
+
+    def _on_quad_view_toggled(self, checked: bool):
+        """Toggle quad-view mode in both Layout and Module modes."""
+        self._quad_view_enabled = checked
+        self._maximize_pane_menu.setEnabled(checked)
+
+        current_mode = self.mode_selector.current_mode()
+
+        if current_mode == "layout":
+            if checked:
+                # Switch to quad-view (index 2)
+                self._center_stack.setCurrentIndex(2)
+                # Enable interactive mode: GridCanvas + flow views + 3D
+                layout = self.layout_editor.get_layout()
+                self._quad_view_widget.set_interactive_mode(True)
+                if layout:
+                    self._quad_view_widget.set_layout(layout)
+                # Generate 3D preview for the perspective pane
+                self._sync_layout_to_quad_view()
+                self.statusBar().showMessage(
+                    "Quad View (Layout): Edit layout top-left, see Z-levels in Front/Side, 3D bottom-right", 5000
+                )
+            else:
+                # Switch back to layout editor (index 0)
+                self._quad_view_widget.set_interactive_mode(False)
+                self._center_stack.setCurrentIndex(0)
+                self.statusBar().showMessage("Layout Editor mode", 3000)
+        elif current_mode == "primitive":
+            if checked:
+                # Switch to quad-view (index 2)
+                self._center_stack.setCurrentIndex(2)
+                # Module mode: mesh-based ortho views
+                self._quad_view_widget.set_interactive_mode(False)
+                self._sync_mesh_to_quad_view()
+                self.statusBar().showMessage(
+                    "Quad View: Pan with middle-drag, zoom with scroll, F to fit", 5000
+                )
+            else:
+                # Switch back to single preview (index 1)
+                self._center_stack.setCurrentIndex(1)
+                self.statusBar().showMessage("Single View mode", 3000)
+
+    def _on_maximize_pane(self, pane: str):
+        """Maximize a pane in quad-view."""
+        if not self._quad_view_enabled:
+            return
+        self._quad_view_widget.toggle_maximize(pane)
+        if self._quad_view_widget.is_maximized():
+            self.statusBar().showMessage(f"Maximized {pane.upper()} view - press Escape or 0 to restore", 3000)
+        else:
+            self.statusBar().showMessage("Quad View restored", 2000)
+
+    def _on_restore_quad_view(self):
+        """Restore quad-view from maximized state."""
+        if self._quad_view_enabled:
+            self._quad_view_widget.restore_quad_view()
+            self.statusBar().showMessage("Quad View restored", 2000)
+
+    # --- Quad canvas command routing ---
+
+    def _on_quad_canvas_command(self, command):
+        """Route a command from the quad GridCanvas through LayoutEditorWidget."""
+        from quake_levelgenerator.src.ui.widgets.layout_editor.commands import PlacePrimitiveCommand
+
+        # Execute via layout editor's command pipeline (undo/redo, modified state)
+        self.layout_editor.execute_external_command(command)
+
+        # Determine selection ID for quad canvas refresh
+        select_id = None
+        if isinstance(command, PlacePrimitiveCommand) and command.placed_id:
+            select_id = command.placed_id
+
+        # Refresh quad canvas to reflect the change
+        self._quad_view_widget.refresh_layout_canvas(select_id)
+
+        # Request debounced geometry regeneration for 3D panes
+        self._quad_view_widget.request_regen()
+
+    def _on_quad_regen_requested(self):
+        """Handle debounced regen request from quad view."""
+        self._sync_layout_to_quad_view()
+
+    def _on_quad_canvas_selection(self, prim_id: str):
+        """Handle primitive selection in quad canvas - sync to layout editor."""
+        self.layout_editor.select_primitive(prim_id)
+
+    def _on_quad_canvas_selection_cleared(self):
+        """Handle selection cleared in quad canvas."""
+        self.layout_editor.clear_selection()
+
+    def _sync_quad_canvas_from_editor(self):
+        """Sync quad canvas and flow views when layout editor modifies the layout."""
+        if (self._quad_view_enabled and
+                self._quad_view_widget.is_interactive() and
+                self.mode_selector.current_mode() == "layout"):
+            self._quad_view_widget.refresh_layout_canvas()
+            # Debounced regen updates the 3D pane
+            self._quad_view_widget.request_regen()
+
+    def _sync_mesh_to_quad_view(self):
+        """Sync current mesh data from single preview to quad-view."""
+        # Get mesh from single preview's internal state and send to quad-view
+        # This is called when switching to quad-view mode
+        prim_name = self.primitive_panel.get_primitive_name()
+        params = self._inject_texture_settings(self.primitive_panel.get_parameters())
+        if prim_name:
+            from quake_levelgenerator.src.generators.primitives.catalog import PRIMITIVE_CATALOG
+            from quake_levelgenerator.src.generators.textures import TEXTURE_SETTINGS
+            from quake_levelgenerator.src.ui.preview.mesh_builder import (
+                MeshBuilder, build_wireframe_mesh, build_surface_meshes
+            )
+
+            cls = PRIMITIVE_CATALOG.get_primitive(prim_name)
+            if cls:
+                try:
+                    instance = cls()
+                    instance.apply_params(params)
+                    instance._texture_wall = TEXTURE_SETTINGS.get_texture("wall")
+                    instance._texture_floor = TEXTURE_SETTINGS.get_texture("floor")
+                    instance._texture_ceiling = TEXTURE_SETTINGS.get_texture("ceiling")
+                    instance._texture_trim = TEXTURE_SETTINGS.get_texture("trim")
+                    instance._texture_structural = TEXTURE_SETTINGS.get_texture("structural")
+
+                    brushes = instance.generate()
+
+                    # Build meshes
+                    surface_meshes = build_surface_meshes(brushes)
+                    builder = MeshBuilder()
+                    builder.add_brushes(brushes)
+                    mesh = builder.build()
+                    wire_verts, wire_indices = build_wireframe_mesh(brushes)
+
+                    # Update quad-view
+                    self._quad_view_widget.set_mesh(mesh, (wire_verts, wire_indices), surface_meshes)
+                    self._quad_view_widget.fit_all_to_bounds()
+                except Exception as e:
+                    print(f"Failed to sync mesh to quad-view: {e}")
+
+    def _sync_layout_to_quad_view(self):
+        """Sync current layout geometry to quad-view.
+
+        Generates brushes from the layout editor and displays them in quad-view
+        so users can visualize Z-levels of multi-floor dungeons.
+        """
+        try:
+            from quake_levelgenerator.src.ui.preview.mesh_builder import (
+                MeshBuilder, build_wireframe_mesh, build_surface_meshes
+            )
+
+            # Get layout from editor
+            layout = self.layout_editor.get_layout()
+
+            if not layout or not layout.primitives:
+                # No layout yet - show empty view
+                self.statusBar().showMessage(
+                    "No layout to display. Place modules first, then enable Quad View.", 5000
+                )
+                return
+
+            # Generate brushes from layout
+            result = generate_from_layout(layout)
+
+            if not result or not result.brushes:
+                self.statusBar().showMessage(
+                    "Could not generate geometry from layout.", 3000
+                )
+                return
+
+            brushes = result.brushes
+
+            # Build meshes
+            surface_meshes = build_surface_meshes(brushes)
+            builder = MeshBuilder()
+            builder.add_brushes(brushes)
+            mesh = builder.build()
+            wire_verts, wire_indices = build_wireframe_mesh(brushes)
+
+            # Update quad-view (in interactive mode, only 3D pane gets mesh)
+            self._quad_view_widget.set_mesh(mesh, (wire_verts, wire_indices), surface_meshes)
+            if self._quad_view_widget.is_interactive():
+                # Only fit the 3D perspective view; flow views keep their
+                # current pan/zoom so the camera doesn't jump after edits.
+                self._quad_view_widget._perspective_view.fit_to_bounds()
+                self._quad_view_widget._refresh_flow_views()
+            else:
+                self._quad_view_widget.fit_all_to_bounds()
+
+            # Show helpful message
+            num_prims = len(layout.primitives)
+            self.statusBar().showMessage(
+                f"Quad View: {num_prims} modules, {len(brushes)} brushes. Use Front/Side views to see Z-levels.", 5000
+            )
+
+        except Exception as e:
+            self.statusBar().showMessage(f"Failed to generate quad-view: {e}", 5000)
 
     def _on_undo_state_changed(self, can_undo: bool, can_redo: bool,
                                 undo_desc: str, redo_desc: str):
@@ -758,10 +1136,29 @@ class MainWindow(QMainWindow):
         """Update the validation panel with the current layout."""
         layout = self.layout_editor.get_layout()
         self._validation_panel.set_layout(layout)
+        self._notify_tab(2)
 
     def _on_validation_issue_clicked(self, primitive_id: str):
         """Handle clicking on a validation issue - select the primitive."""
         self.layout_editor.select_primitive(primitive_id)
+
+    def _on_right_tab_changed(self, index: int):
+        """Clear notification badge when tab is activated."""
+        if index in self._tab_has_new_content and self._tab_has_new_content[index]:
+            self._tab_has_new_content[index] = False
+            # Restore original tab title (remove dot prefix)
+            title = self.right_tabs.tabText(index)
+            if title.startswith("\u2022 "):
+                self.right_tabs.setTabText(index, title[2:])
+
+    def _notify_tab(self, tab_index: int):
+        """Show a notification dot on a tab if it's not currently active."""
+        if self.right_tabs.currentIndex() != tab_index:
+            if not self._tab_has_new_content.get(tab_index):
+                self._tab_has_new_content[tab_index] = True
+                title = self.right_tabs.tabText(tab_index)
+                if not title.startswith("\u2022 "):
+                    self.right_tabs.setTabText(tab_index, f"\u2022 {title}")
 
     # ---------------------------------------------------------------
     # Signals
@@ -780,15 +1177,33 @@ class MainWindow(QMainWindow):
         self.primitive_panel.parameters_changed.connect(self._on_primitive_params_changed)
         self.primitive_panel.validation_changed.connect(self._on_validation_status)
 
-        # Connect layout editor file signals for recent files
+        # Connect layout editor file signals for recent files and status bar
         self.layout_editor.file_saved.connect(self._on_file_operation)
         self.layout_editor.file_loaded.connect(self._on_file_operation)
+        self.layout_editor.file_saved.connect(
+            lambda p: self.statusBar().showMessage(f"Layout saved: {Path(p).name}", 5000)
+        )
+        self.layout_editor.file_loaded.connect(
+            lambda p: self.statusBar().showMessage(f"Layout loaded: {Path(p).name}", 5000)
+        )
 
         # Connect layout editor to validation panel
         self.layout_editor.layout_changed.connect(self._update_validation_panel)
 
+        # Tab notification badges
+        self.log_text.textChanged.connect(lambda: self._notify_tab(0))
+
         # Connect layout editor undo/redo state changes to menu
         self.layout_editor.undo_state_changed.connect(self._on_undo_state_changed)
+
+        # Connect quad view interactive signals
+        self._quad_view_widget.command_requested.connect(self._on_quad_canvas_command)
+        self._quad_view_widget.regen_requested.connect(self._on_quad_regen_requested)
+        self._quad_view_widget.primitive_selected.connect(self._on_quad_canvas_selection)
+        self._quad_view_widget.selection_cleared.connect(self._on_quad_canvas_selection_cleared)
+
+        # Sync quad canvas when layout editor changes
+        self.layout_editor.layout_changed.connect(self._sync_quad_canvas_from_editor)
 
         # Keyboard shortcuts
         self._shortcut_generate = QShortcut(QKeySequence("Ctrl+G"), self)
@@ -808,6 +1223,27 @@ class MainWindow(QMainWindow):
 
         self._shortcut_help = QShortcut(QKeySequence("F1"), self)
         self._shortcut_help.activated.connect(self._show_help)
+
+        # Quad-view maximize pane shortcuts (application-wide)
+        # Note: Shift+Q is already handled by _quad_view_action shortcut
+        self._shortcut_maximize_top = QShortcut(QKeySequence("Alt+7"), self)
+        self._shortcut_maximize_top.activated.connect(lambda: self._on_maximize_pane("top"))
+
+        self._shortcut_maximize_front = QShortcut(QKeySequence("Alt+1"), self)
+        self._shortcut_maximize_front.activated.connect(lambda: self._on_maximize_pane("front"))
+
+        self._shortcut_maximize_side = QShortcut(QKeySequence("Alt+3"), self)
+        self._shortcut_maximize_side.activated.connect(lambda: self._on_maximize_pane("side"))
+
+        self._shortcut_maximize_3d = QShortcut(QKeySequence("Alt+0"), self)
+        self._shortcut_maximize_3d.activated.connect(lambda: self._on_maximize_pane("3d"))
+
+        # Mode switching shortcuts
+        self._shortcut_layout_mode = QShortcut(QKeySequence("Ctrl+1"), self)
+        self._shortcut_layout_mode.activated.connect(lambda: self.mode_selector.set_mode("layout"))
+
+        self._shortcut_module_mode = QShortcut(QKeySequence("Ctrl+2"), self)
+        self._shortcut_module_mode.activated.connect(lambda: self.mode_selector.set_mode("primitive"))
 
     def _inject_texture_settings(self, params: dict) -> dict:
         """Inject global texture settings into primitive parameters.
@@ -830,26 +1266,53 @@ class MainWindow(QMainWindow):
         # Show/hide Random Dungeon button based on mode
         self.random_gen_btn.setVisible(mode == "layout")
 
-        # Enable/disable layout-specific menu items
+        # Enable/disable layout-specific menu items with tooltip explanations
         is_layout = (mode == "layout")
-        self._undo_action.setEnabled(is_layout)
-        self._redo_action.setEnabled(is_layout)
-        self._duplicate_action.setEnabled(is_layout)
-        self._delete_action.setEnabled(is_layout)
-        self._flow_action.setEnabled(is_layout)
-        self._preview_3d_action.setEnabled(is_layout)
-        self._zoom_in_action.setEnabled(is_layout)
-        self._zoom_out_action.setEnabled(is_layout)
-        self._fit_action.setEnabled(is_layout)
-        self._reset_view_action.setEnabled(is_layout)
+        layout_only_actions = [
+            self._undo_action, self._redo_action,
+            self._duplicate_action, self._delete_action,
+            self._flow_action, self._preview_3d_action,
+            self._zoom_in_action, self._zoom_out_action,
+            self._fit_action, self._reset_view_action,
+        ]
+        for action in layout_only_actions:
+            action.setEnabled(is_layout)
+            if not is_layout:
+                action.setStatusTip("Available in Layout mode only")
+            else:
+                action.setStatusTip("")
+        self._floor_filter_menu.setEnabled(is_layout)
+
+        # Quad-view is available in both modes
+        self._quad_view_action.setEnabled(True)
+        self._maximize_pane_menu.setEnabled(self._quad_view_enabled)
 
         # Switch center content based on mode
         if mode == "layout":
-            self._center_stack.setCurrentIndex(0)  # Layout editor
-            self.statusBar().showMessage("Layout mode - Click to place modules, R to rotate, or use Random Dungeon")
+            if self._quad_view_enabled:
+                self._center_stack.setCurrentIndex(2)  # Quad-view
+                # Enable interactive mode with GridCanvas + flow views
+                layout = self.layout_editor.get_layout()
+                self._quad_view_widget.set_interactive_mode(True)
+                if layout:
+                    self._quad_view_widget.set_layout(layout)
+                self._sync_layout_to_quad_view()
+                self.statusBar().showMessage("Layout mode (Quad View) - Edit layout, see Z-levels, 3D preview")
+            else:
+                self._center_stack.setCurrentIndex(0)  # Layout editor
+                self.statusBar().showMessage("Layout mode - Click to place modules, R to rotate, or use Random Dungeon")
         else:
-            self._center_stack.setCurrentIndex(1)  # Preview
-            self.statusBar().showMessage("Module mode - Use mouse to orbit, scroll to zoom")
+            # Module mode
+            if self._quad_view_enabled:
+                self._center_stack.setCurrentIndex(2)  # Quad-view
+                # Module mode: mesh-based ortho views
+                self._quad_view_widget.set_interactive_mode(False)
+                self._quad_view_widget.clear()
+                self._sync_mesh_to_quad_view()
+                self.statusBar().showMessage("Module mode (Quad View) - Pan with middle-drag, zoom with scroll")
+            else:
+                self._center_stack.setCurrentIndex(1)  # Single preview
+                self.statusBar().showMessage("Module mode - Use mouse to orbit, scroll to zoom")
             # Update preview with texture settings
             prim_name = self.primitive_panel.get_primitive_name()
             params = self._inject_texture_settings(self.primitive_panel.get_parameters())
@@ -863,6 +1326,10 @@ class MainWindow(QMainWindow):
             if prim_name:
                 params_with_textures = self._inject_texture_settings(params)
                 self.preview_widget.update_primitive(prim_name, params_with_textures)
+
+                # Also update quad-view if enabled
+                if self._quad_view_enabled:
+                    self._sync_mesh_to_quad_view()
 
     def _on_validation_status(self, message: str, severity: str):
         """Show validation status in status bar."""
@@ -891,16 +1358,28 @@ class MainWindow(QMainWindow):
         """Save the export format preference to settings."""
         self._settings.setValue('export_format', fmt)
 
-    def _show_export_format_dialog(self) -> str | None:
-        """Show dialog to select export format. Returns format string or None if cancelled."""
+    def _show_export_format_dialog(self, force_show: bool = False) -> str | None:
+        """Show dialog to select export format.
+
+        If the user previously chose "Always use this format", the dialog is
+        skipped and the saved format is returned directly (unless *force_show*
+        is True).
+
+        Returns format string or None if cancelled.
+        """
         saved_fmt = self._get_saved_export_format()
+
+        # Skip dialog if user chose "always use" and we're not forced
+        if not force_show and self._settings.value("always_use_export_format", False, type=bool):
+            return saved_fmt
 
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Export Format")
         dialog.setText("Select the export format:")
         dialog.setInformativeText(
             "idTech 1: Quake, Half-Life (3-point plane format)\n"
-            "idTech 4: Doom 3, Quake 4 (brushDef3 format)"
+            "idTech 4: Doom 3, Quake 4 (brushDef3 format)\n\n"
+            "Tip: Hold Shift when clicking Export to change format later."
         )
 
         # Add custom buttons
@@ -919,9 +1398,11 @@ class MainWindow(QMainWindow):
         clicked = dialog.clickedButton()
         if clicked == idtech1_btn:
             self._save_export_format("idtech1")
+            self._settings.setValue("always_use_export_format", True)
             return "idtech1"
         elif clicked == idtech4_btn:
             self._save_export_format("idtech4")
+            self._settings.setValue("always_use_export_format", True)
             return "idtech4"
         else:
             return None
@@ -940,6 +1421,42 @@ class MainWindow(QMainWindow):
             # Generate from primitive panel
             self._generate_from_primitive()
 
+    def _validate_before_generation(self, params: dict) -> bool:
+        """Validate generation parameters and show actionable warnings.
+
+        Returns True if generation should proceed, False otherwise.
+        """
+        issues = []
+
+        map_area = params['map_width'] * params['map_height']
+        room_count = params['room_count']
+
+        # Each room needs roughly 9-16 tiles (3x3 to 4x4 footprint)
+        min_area_needed = room_count * 12
+        if min_area_needed > map_area:
+            min_side = max(10, int((min_area_needed ** 0.5) + 1))
+            issues.append(
+                f"Room count {room_count} requires at least ~{min_side}x{min_side} "
+                f"map size (current: {params['map_width']}x{params['map_height']})."
+            )
+
+        floor_count = params.get('floor_count', 1)
+        if floor_count > 1 and room_count < 3:
+            issues.append(
+                f"Multi-floor layouts ({floor_count} floors) need at least 3 rooms per floor "
+                f"to allow stair placement."
+            )
+
+        if issues:
+            msg = "Potential issues detected:\n\n" + "\n\n".join(f"- {i}" for i in issues)
+            msg += "\n\nGeneration may fail or produce poor results. Continue anyway?"
+            reply = QMessageBox.warning(
+                self, "Parameter Warning", msg,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            return reply == QMessageBox.Yes
+        return True
+
     def _on_random_generate(self):
         """Generate random dungeon layout and load it into the layout editor."""
         # Only works in layout mode
@@ -950,6 +1467,10 @@ class MainWindow(QMainWindow):
 
         # Get parameters from layout panel
         params = self.layout_panel.get_parameters()
+
+        # Pre-validate parameters
+        if not self._validate_before_generation(params):
+            return
 
         self.log_text.clear()
         self.log_text.append("Generating random layout...")
@@ -1015,9 +1536,20 @@ class MainWindow(QMainWindow):
                 f"Random layout generated with {prim_count} modules (seed: {actual_seed})"
             )
 
-            # Reset seed to 0 (Random) so next generation uses a new seed
-            # This prevents the same dungeon from being regenerated repeatedly
-            self.layout_panel.seed_spinbox.setValue(0)
+            # If using random seed, uncheck the fixed seed toggle so next
+            # generation gets a fresh random seed
+            if not self.layout_panel.fixed_seed_check.isChecked():
+                self.layout_panel.seed_spinbox.setValue(0)
+
+            # Center the 2D canvas view on the generated layout
+            self.layout_editor.fit_to_content()
+
+            # Update quad view 2D panes if quad view is active in layout mode
+            if self._quad_view_enabled and self._quad_view_widget.is_interactive():
+                self._quad_view_widget.set_layout(layout)
+
+            # Auto-generate brushes so the user sees geometry immediately
+            self._generate_from_layout()
 
         except Exception as e:
             self.log_text.append(f"ERROR: {e}")
@@ -1114,6 +1646,15 @@ class MainWindow(QMainWindow):
             self.export_obj_btn.setToolTip("Export to OBJ mesh format for Blender")
 
             self.statusBar().showMessage(f"Built {result.brush_count} brushes - Ready to export", 5000)
+
+            # Update the 3D preview with generated brushes and fit camera
+            if hasattr(self, 'preview_widget') and hasattr(self.preview_widget, 'set_brushes'):
+                self.preview_widget.set_brushes(result.brushes)
+                self.preview_widget.fit_to_bounds()
+
+            # Also sync to quad-view if enabled
+            if self._quad_view_enabled:
+                self._sync_layout_to_quad_view()
 
         except Exception as e:
             self.log_text.append(f"FAILED: {e}")
@@ -1222,13 +1763,31 @@ class MainWindow(QMainWindow):
 
         map_name = self.map_name_edit.text().strip() or "generated_map"
 
+        # Get last export directory or default to output/
+        last_dir = self._settings.value("last_export_dir", "")
+        if not last_dir or not Path(last_dir).is_dir():
+            last_dir = str(Path("output").resolve())
+            Path("output").mkdir(exist_ok=True)
+
+        default_path = str(Path(last_dir) / f"{map_name}.map")
+
+        output_path_str, _ = QFileDialog.getSaveFileName(
+            self, "Export .map File", default_path,
+            "MAP Files (*.map);;All Files (*)"
+        )
+        if not output_path_str:
+            return  # User cancelled
+
+        output_path = Path(output_path_str)
+
+        # Remember the directory for next time
+        self._settings.setValue("last_export_dir", str(output_path.parent))
+
         self.progress_bar.setValue(50)
         self.progress_label.setText("Writing .map file...")
 
         try:
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
-            output_path = output_dir / f"{map_name}.map"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
             writer = MapWriter(export_format=fmt)
             worldspawn = writer.create_worldspawn()
@@ -1255,8 +1814,7 @@ class MainWindow(QMainWindow):
             })()
             self.open_output_btn.setEnabled(True)
 
-            self.statusBar().showMessage(f"Exported to {output_path}")
-            QMessageBox.information(self, "Export Complete", f"Map exported to:\n{output_path}")
+            self.statusBar().showMessage(f"Exported to {output_path}", 5000)
 
         except Exception as e:
             self.log_text.append(f"Export FAILED: {e}")
@@ -1274,14 +1832,32 @@ class MainWindow(QMainWindow):
 
         map_name = self.map_name_edit.text().strip() or "generated_map"
 
+        # Get last export directory or default to output/
+        last_dir = self._settings.value("last_export_dir", "")
+        if not last_dir or not Path(last_dir).is_dir():
+            last_dir = str(Path("output").resolve())
+            Path("output").mkdir(exist_ok=True)
+
+        default_path = str(Path(last_dir) / f"{map_name}.obj")
+
+        obj_path_str, _ = QFileDialog.getSaveFileName(
+            self, "Export .obj File", default_path,
+            "OBJ Files (*.obj);;All Files (*)"
+        )
+        if not obj_path_str:
+            return  # User cancelled
+
+        obj_path = Path(obj_path_str)
+        mtl_path = obj_path.with_suffix(".mtl")
+
+        # Remember the directory for next time
+        self._settings.setValue("last_export_dir", str(obj_path.parent))
+
         self.progress_bar.setValue(50)
         self.progress_label.setText("Writing .obj file...")
 
         try:
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
-            obj_path = output_dir / f"{map_name}.obj"
-            mtl_path = output_dir / f"{map_name}.mtl"
+            obj_path.parent.mkdir(parents=True, exist_ok=True)
 
             writer = ObjWriter()
             writer.add_brushes(self._generated_brushes)
@@ -1304,8 +1880,7 @@ class MainWindow(QMainWindow):
             })()
             self.open_output_btn.setEnabled(True)
 
-            self.statusBar().showMessage(f"Exported to {obj_path}")
-            QMessageBox.information(self, "Export Complete", f"OBJ exported to:\n{obj_path}")
+            self.statusBar().showMessage(f"Exported to {obj_path}", 5000)
 
         except Exception as e:
             self.log_text.append(f"Export FAILED: {e}")
@@ -1313,12 +1888,19 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Error", str(e))
 
     def _on_cancel(self):
+        """Handle Escape key - cancel generation or restore quad-view."""
+        # First, try to cancel any running generation
         if self.generation_thread and self.generation_thread.isRunning():
             self.generation_thread.cancel_generation()
             self.generation_thread.quit()
             self.generation_thread.wait(5000)
             self._reset_ui()
             self.log_text.append("Cancelled.")
+            return
+
+        # If quad-view is maximized, restore it
+        if self._quad_view_enabled and self._quad_view_widget.is_maximized():
+            self._on_restore_quad_view()
 
     def _on_progress(self, progress: PipelineProgress):
         self.progress_bar.setValue(progress.percentage)
@@ -1337,9 +1919,19 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Done", f"Map exported to:\n{result.primary_output}")
 
     def _on_failed(self, error: str):
-        self.log_text.append(f"FAILED: {error}")
+        # Split user-friendly message from full stack trace
+        if "---TRACEBACK---" in error:
+            summary, full_trace = error.split("---TRACEBACK---", 1)
+            summary = summary.strip()
+            # Log the full trace for debugging
+            self.log_text.append(f"FAILED: {summary}")
+            self.log_text.append(f"Stack trace:\n{full_trace.strip()}")
+            # Show only the summary in the dialog
+            QMessageBox.critical(self, "Error", summary)
+        else:
+            self.log_text.append(f"FAILED: {error}")
+            QMessageBox.critical(self, "Error", error)
         self.progress_label.setText("Failed")
-        QMessageBox.critical(self, "Error", error)
 
     def _on_thread_done(self):
         self._reset_ui()
@@ -1360,6 +1952,8 @@ class MainWindow(QMainWindow):
 <tr><td><b>Ctrl+R</b></td><td>Generate random dungeon (Layout mode)</td></tr>
 <tr><td><b>Ctrl+E</b></td><td>Export .map file</td></tr>
 <tr><td><b>Ctrl+O</b></td><td>Open output folder</td></tr>
+<tr><td><b>Ctrl+1</b></td><td>Switch to Layout mode</td></tr>
+<tr><td><b>Ctrl+2</b></td><td>Switch to Module mode</td></tr>
 <tr><td><b>Escape</b></td><td>Cancel generation</td></tr>
 <tr><td><b>F1</b></td><td>Show this help</td></tr>
 </table>
@@ -1370,21 +1964,45 @@ class MainWindow(QMainWindow):
 <tr><td><b>W/S</b></td><td>Fly forward/backward</td></tr>
 <tr><td><b>A/D</b></td><td>Strafe left/right</td></tr>
 <tr><td><b>Q/E</b></td><td>Fly down/up</td></tr>
+<tr><td><b>Shift</b></td><td>Sprint (2x camera speed)</td></tr>
 <tr><td><b>Middle-drag</b></td><td>Pan</td></tr>
 <tr><td><b>Scroll</b></td><td>Zoom</td></tr>
+<tr><td><b>RMB+Scroll</b></td><td>Adjust camera speed</td></tr>
+<tr><td><b>Ctrl+Drag</b></td><td>Mouselook (trackpad alternative)</td></tr>
 <tr><td><b>F</b></td><td>Fit to bounds</td></tr>
+<tr><td><b>Home</b></td><td>Reset view and speed</td></tr>
+<tr><td><b>H</b></td><td>Toggle control hints</td></tr>
 <tr><td><b>1-6</b></td><td>View presets</td></tr>
+</table>
+
+<h3>Quad View (Both Modes)</h3>
+<table style="border-collapse: collapse;">
+<tr><td><b>G</b></td><td>Focus on selected module</td></tr>
+<tr><td><b>Shift+Q</b></td><td>Toggle quad-view (4-pane view)</td></tr>
+<tr><td><b>Alt+7</b></td><td>Maximize Top (XY) view</td></tr>
+<tr><td><b>Alt+1</b></td><td>Maximize Front (XZ) view</td></tr>
+<tr><td><b>Alt+3</b></td><td>Maximize Side (YZ) view</td></tr>
+<tr><td><b>Alt+0</b></td><td>Maximize 3D view</td></tr>
+<tr><td><b>Escape</b></td><td>Restore quad-view</td></tr>
 </table>
 
 <h3>Quick Tips</h3>
 <ul>
 <li><b>Layout Mode:</b> Design dungeons by placing and connecting modules on a 2D grid</li>
 <li><b>Module Mode:</b> Preview individual geometric pieces with real-time parameter editing</li>
+<li><b>Quad View:</b> Use View > Quad View to see orthographic views showing Z-height</li>
 <li>Use <b>Build Geometry</b> to prepare for export, then <b>Export .map</b> to save</li>
 <li>Exported maps can be opened in TrenchBroom or other idTech editors</li>
 </ul>
 """
         QMessageBox.information(self, "Help", help_text)
+
+    def _on_copy_log(self):
+        """Copy log contents to clipboard."""
+        text = self.log_text.toPlainText()
+        if text:
+            QApplication.clipboard().setText(text)
+            self.statusBar().showMessage("Log copied to clipboard", 3000)
 
     def _on_open_output(self):
         if self.current_result and self.current_result.primary_output:
@@ -1407,11 +2025,33 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
+        # Check for unsaved layout changes
+        if self.layout_editor.has_unsaved_changes():
+            reply = QMessageBox.warning(
+                self, "Unsaved Changes",
+                "You have unsaved changes to the layout.\n\n"
+                "Save before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Save:
+                self.layout_editor.save_layout()
+                # If still dirty after save attempt, user may have cancelled the dialog
+                if self.layout_editor.has_unsaved_changes():
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            # Discard falls through to close
+
         # Save settings before closing
         self._save_settings()
 
         # Clean up preview widget OpenGL resources
-        self.preview_widget.cleanup()
+        if self._opengl_available:
+            self.preview_widget.cleanup()
+            self._quad_view_widget.cleanup()
         event.accept()
 
     # ---------------------------------------------------------------
@@ -1441,6 +2081,9 @@ class MainWindow(QMainWindow):
         else:
             self._recent_files = []
 
+        # Load quad-view state (will be applied after UI setup)
+        self._saved_quad_view_enabled = self._settings.value("quad_view_enabled", False, type=bool)
+
     def _save_settings(self):
         """Save application settings to QSettings."""
         # Save window geometry
@@ -1454,8 +2097,67 @@ class MainWindow(QMainWindow):
         # Save recent files
         self._settings.setValue("recent_files", self._recent_files)
 
+        # Save quad-view state
+        self._settings.setValue("quad_view_enabled", self._quad_view_enabled)
+        if hasattr(self, '_quad_view_widget'):
+            self._quad_view_widget.save_splitter_state(self._settings)
+
         # Mark that we've run at least once
         self._settings.setValue("first_run_complete", True)
+
+        # Clean up autosave on clean exit
+        self._delete_autosave()
+
+    # ---------------------------------------------------------------
+    # Auto-save and crash recovery
+    # ---------------------------------------------------------------
+
+    _AUTOSAVE_DIR = Path.home() / ".config" / "quake_levelgenerator"
+    _AUTOSAVE_FILE = _AUTOSAVE_DIR / "autosave.json"
+
+    def _auto_save_layout(self):
+        """Periodically save the layout if it has unsaved changes."""
+        if not self.layout_editor.has_unsaved_changes():
+            return
+        try:
+            self._AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+            layout = self.layout_editor.get_layout()
+            if layout and layout.primitives:
+                data = layout.to_dict()
+                with open(self._AUTOSAVE_FILE, 'w') as f:
+                    json.dump(data, f, indent=2)
+                logging.getLogger(__name__).debug("Auto-saved layout (%d modules)", len(layout.primitives))
+        except Exception as e:
+            logging.getLogger(__name__).warning("Auto-save failed: %s", e)
+
+    def _delete_autosave(self):
+        """Remove the autosave file."""
+        try:
+            if self._AUTOSAVE_FILE.exists():
+                self._AUTOSAVE_FILE.unlink()
+        except OSError:
+            pass
+
+    def _check_autosave_recovery(self):
+        """On startup, offer to restore from autosave if it exists."""
+        if not self._AUTOSAVE_FILE.exists():
+            return
+        try:
+            reply = QMessageBox.question(
+                self, "Recover Unsaved Work",
+                "An auto-saved layout was found from a previous session.\n\n"
+                "Would you like to restore it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Yes:
+                if self.layout_editor.load_file(str(self._AUTOSAVE_FILE)):
+                    self.mode_selector.set_mode("layout")
+                    self.statusBar().showMessage("Restored auto-saved layout", 5000)
+            # Always clean up after offering recovery
+            self._delete_autosave()
+        except Exception as e:
+            logging.getLogger(__name__).warning("Auto-save recovery failed: %s", e)
+            self._delete_autosave()
 
     def _restore_geometry(self):
         """Restore window geometry and splitter sizes from settings."""
@@ -1480,6 +2182,9 @@ class MainWindow(QMainWindow):
                 # Otherwise use defaults set in _setup_ui
             except (TypeError, ValueError):
                 pass  # Use default sizes
+
+        # Always start in standard (single-pane) view for a clean launch.
+        # Quad view can be toggled via View > Quad View during the session.
 
     def _add_recent_file(self, file_path: str):
         """Add a file to the recent files list."""

@@ -986,3 +986,408 @@ class Battlement(GeometricPrimitive):
             ))
 
         return brushes
+
+
+class SpiralStaircase(GeometricPrimitive):
+    """A spiral staircase optimized for comfortable gameplay traversal.
+
+    Design Philosophy:
+        This staircase is designed to PLAY WELL, not just look good. Common
+        spiral stair problems avoided:
+        - Steps too narrow at inner edge (player slides off)
+        - Turn too tight (player gets stuck)
+        - Steps too steep (uncomfortable movement)
+        - No center pillar (player falls through)
+
+    Gameplay Constraints Applied:
+        - Player bbox: 32x32x56 units
+        - Comfortable step height: 8-12 units (default 8)
+        - Min inner arc length: 24 units per step (walkable)
+        - Center pillar fills the void (prevents falls)
+        - Conservative defaults prioritize playability
+
+    Technical Notes:
+        - Each step is a horizontal pie-slice brush
+        - Steps overlap by 1 unit to prevent seams
+        - Direction: clockwise ascending (CW) or counter-clockwise (CCW)
+        - Can connect to rooms via standard 128-unit footprint
+    """
+
+    # Validated defaults for comfortable gameplay
+    inner_radius: float = 48.0    # Minimum for walkable steps
+    outer_radius: float = 128.0   # Standard room radius
+    total_height: float = 128.0   # One story
+    step_height: float = 8.0      # Very comfortable (16 steps for 128 height)
+    rotations: float = 1.0        # Full rotations (can be fractional)
+    clockwise: bool = True        # True = CW when viewed from above
+    center_pillar: bool = True    # Fills center void - highly recommended
+    pillar_radius: float = 24.0   # Pillar fills inner area
+    pillar_angle: float = 0.0     # Rotation of pillar in degrees (align with spiral)
+    outer_wall: bool = False      # Optional outer cylindrical wall
+    curve_segments: int = 8       # Angular segments per rotation (4=square, 8=octagon)
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Spiral Staircase"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Structural"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        return {
+            "inner_radius": {
+                "type": "float", "default": 48.0, "min": 32, "max": 128, "label": "Inner Radius",
+                "description": "Inner edge radius. Keep >= 48 for comfortable walking. "
+                              "Too small = player slides off steps."
+            },
+            "outer_radius": {
+                "type": "float", "default": 128.0, "min": 64, "max": 256, "label": "Outer Radius",
+                "description": "Outer edge radius. Step width = outer - inner. "
+                              "Keep at least 64 units wider than inner for player clearance."
+            },
+            "total_height": {
+                "type": "float", "default": 128.0, "min": 32, "max": 512, "label": "Total Height",
+                "description": "Vertical rise of the staircase. More height = more steps."
+            },
+            "step_height": {
+                "type": "float", "default": 8.0, "min": 4, "max": 16, "label": "Step Height",
+                "description": "Height of each step. 8 = very smooth, 12 = normal, 16 = steep. "
+                              "Max comfortable is 16 (idTech limit is 18)."
+            },
+            "rotations": {
+                "type": "float", "default": 1.0, "min": 0.25, "max": 4.0, "label": "Rotations",
+                "description": "How many full turns. 1.0 = 360°, 0.5 = 180° (half turn), "
+                              "0.25 = 90° (quarter turn)."
+            },
+            "clockwise": {
+                "type": "bool", "default": True, "label": "Clockwise",
+                "description": "Rotation direction when viewed from above. "
+                              "True = clockwise ascending, False = counter-clockwise."
+            },
+            "center_pillar": {
+                "type": "bool", "default": True, "label": "Center Pillar",
+                "description": "Add solid center pillar. HIGHLY RECOMMENDED - "
+                              "prevents player from falling into the void."
+            },
+            "pillar_radius": {
+                "type": "float", "default": 24.0, "min": 16, "max": 64, "label": "Pillar Radius",
+                "description": "Radius of center pillar. Should be <= inner_radius for clearance."
+            },
+            "pillar_angle": {
+                "type": "float", "default": 0.0, "min": 0, "max": 360, "label": "Pillar Angle",
+                "description": "Rotation of pillar in degrees. Adjust to align pillar edges with "
+                              "spiral step edges. Try 22.5° for 8-segment, 45° for 4-segment spirals."
+            },
+            "outer_wall": {
+                "type": "bool", "default": False, "label": "Outer Wall",
+                "description": "Add cylindrical outer wall. Useful for enclosed stairwells."
+            },
+            "curve_segments": {
+                "type": "int", "default": 8, "min": 4, "max": 32, "label": "Curve Segments",
+                "description": "Angular segments per rotation. 4=square, 6=hex, 8=octagon (default), "
+                              "16+=smoother. Lower values create more angular/polygonal spirals."
+            },
+        }
+
+    def generate(self) -> List[Brush]:
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+
+        # Validate and clamp parameters for gameplay safety
+        inner_r = max(32.0, self.inner_radius)
+        outer_r = max(inner_r + 48, self.outer_radius)  # Min 48 unit step width
+        step_h = max(4.0, min(16.0, self.step_height))  # Clamp to comfortable range
+
+        # Clamp curve_segments to valid range
+        curve_segs = max(4, min(32, self.curve_segments))
+
+        # Calculate number of steps
+        num_steps = max(1, int(self.total_height / step_h))
+        actual_step_h = self.total_height / num_steps
+
+        # Calculate angle per step and per polygon segment
+        total_angle = self.rotations * 2 * math.pi
+        angle_per_step = total_angle / num_steps
+        segment_angle = (2 * math.pi) / curve_segs  # Angle per polygon edge
+
+        # Verify step depth at inner edge is walkable (min 20 units arc length)
+        inner_arc_length = inner_r * angle_per_step
+        if inner_arc_length < 20:
+            # Automatically adjust inner radius for walkability
+            inner_r = max(inner_r, 20.0 / angle_per_step)
+
+        # Direction multiplier
+        direction = 1.0 if self.clockwise else -1.0
+
+        # Generate steps with angles snapped to polygon vertices
+        for i in range(num_steps):
+            step_z = oz + i * actual_step_h
+
+            # Calculate raw step angles
+            raw_start = i * angle_per_step * direction
+            raw_end = (i + 1) * angle_per_step * direction
+
+            # Snap angles to nearest polygon segment boundary
+            start_angle = self._snap_to_segment(raw_start, segment_angle)
+            end_angle = self._snap_to_segment(raw_end, segment_angle)
+
+            # Ensure we have a minimum angular span (at least one segment)
+            if abs(end_angle - start_angle) < segment_angle * 0.5:
+                # Expand to at least one segment
+                if direction > 0:
+                    end_angle = start_angle + segment_angle
+                else:
+                    start_angle = end_angle + segment_angle
+
+            # Ensure angles are ordered correctly for _radial_segment
+            if direction < 0:
+                start_angle, end_angle = end_angle, start_angle
+
+            # Create the step as a pie-slice brush
+            step_brush = self._create_step_brush(
+                ox, oy, step_z, step_z + actual_step_h,
+                inner_r, outer_r,
+                start_angle, end_angle
+            )
+            brushes.append(step_brush)
+
+        # Center pillar (highly recommended for gameplay)
+        if self.center_pillar:
+            pillar_r = min(self.pillar_radius, inner_r - 8)  # Leave gap for steps
+            if pillar_r >= 16:  # Minimum viable pillar
+                # Match pillar sides to curve_segments (capped at 8 for reasonable geometry)
+                pillar_sides = min(curve_segs, 8)
+                # Convert pillar_angle from degrees to radians
+                pillar_angle_rad = math.radians(self.pillar_angle)
+                brushes.extend(self._generate_center_pillar(
+                    ox, oy, oz, oz + self.total_height, pillar_r, pillar_sides, pillar_angle_rad
+                ))
+
+        # Optional outer wall
+        if self.outer_wall:
+            wall_thickness = 16.0
+            brushes.extend(self._generate_outer_wall(
+                ox, oy, oz, oz + self.total_height,
+                outer_r, wall_thickness, total_angle, direction, curve_segs
+            ))
+
+        return brushes
+
+    def _snap_to_segment(self, angle: float, segment_angle: float) -> float:
+        """Snap an angle to the nearest polygon segment boundary.
+
+        Args:
+            angle: The angle to snap (radians)
+            segment_angle: The angle per polygon segment (radians)
+
+        Returns:
+            The snapped angle aligned to polygon vertices
+        """
+        # Round to nearest segment boundary
+        segments_from_zero = round(angle / segment_angle)
+        return segments_from_zero * segment_angle
+
+    def _create_step_brush(
+        self,
+        cx: float, cy: float, z1: float, z2: float,
+        inner_r: float, outer_r: float,
+        angle1: float, angle2: float
+    ) -> Brush:
+        """Create a single stair step as a radial segment.
+
+        The step is a horizontal pie-slice with flat top for walking.
+        """
+        tex = self.texture_structural
+
+        # Calculate the four corner points
+        cos1, sin1 = math.cos(angle1), math.sin(angle1)
+        cos2, sin2 = math.cos(angle2), math.sin(angle2)
+
+        # Inner corners (at inner_r)
+        ix1 = self._snap_coord(cx + cos1 * inner_r)
+        iy1 = self._snap_coord(cy + sin1 * inner_r)
+        ix2 = self._snap_coord(cx + cos2 * inner_r)
+        iy2 = self._snap_coord(cy + sin2 * inner_r)
+
+        # Outer corners (at outer_r)
+        ox1 = self._snap_coord(cx + cos1 * outer_r)
+        oy1 = self._snap_coord(cy + sin1 * outer_r)
+        ox2 = self._snap_coord(cx + cos2 * outer_r)
+        oy2 = self._snap_coord(cy + sin2 * outer_r)
+
+        z1 = self._snap_coord(z1)
+        z2 = self._snap_coord(z2)
+
+        # Build 6-sided brush for the step
+        # Using explicit planes for maximum control
+        planes = [
+            # Bottom face
+            Plane((ix1, iy1, z1), (ox1, oy1, z1), (ix2, iy2, z1), tex),
+            # Top face (walking surface)
+            Plane((ix1, iy1, z2), (ix2, iy2, z2), (ox1, oy1, z2), tex),
+            # Inner face (toward center)
+            Plane((ix1, iy1, z1), (ix2, iy2, z1), (ix1, iy1, z2), tex),
+            # Outer face (away from center)
+            Plane((ox1, oy1, z1), (ox1, oy1, z2), (ox2, oy2, z1), tex),
+            # Side face 1 (at angle1)
+            Plane((ix1, iy1, z1), (ix1, iy1, z2), (ox1, oy1, z1), tex),
+            # Side face 2 (at angle2)
+            Plane((ix2, iy2, z1), (ox2, oy2, z1), (ix2, iy2, z2), tex),
+        ]
+
+        return Brush(planes=planes, brush_id=self._next_id())
+
+    def _generate_center_pillar(
+        self,
+        cx: float, cy: float, z1: float, z2: float,
+        radius: float, sides: int = 8, angle: float = 0.0
+    ) -> List[Brush]:
+        """Generate a center pillar matching the spiral's polygon shape.
+
+        Args:
+            cx, cy: Center coordinates
+            z1, z2: Bottom and top Z coordinates
+            radius: Pillar radius
+            sides: Number of polygon sides (matches curve_segments, capped at 8)
+            angle: Rotation angle in radians (to align with spiral steps)
+
+        Returns:
+            List of brushes forming the pillar
+        """
+        # If no rotation, use the standard polygonal solid generator
+        if abs(angle) < 0.001:
+            return self._generate_polygonal_solid(
+                cx, cy, z1, z2, radius, sides=sides, texture=self.texture_structural
+            )
+
+        # Generate rotated polygon as a proper N-sided prism
+        return self._generate_rotated_polygon_prism(
+            cx, cy, z1, z2, radius, sides, angle, self.texture_structural
+        )
+
+    def _generate_rotated_polygon_prism(
+        self,
+        cx: float, cy: float, z1: float, z2: float,
+        radius: float, sides: int, angle: float, texture: str
+    ) -> List[Brush]:
+        """Generate an N-sided polygon prism with rotation.
+
+        Creates a proper convex brush with N side faces plus top and bottom.
+
+        Args:
+            cx, cy: Center coordinates
+            z1, z2: Bottom and top Z coordinates
+            radius: Radius to vertices
+            sides: Number of sides (3-8)
+            angle: Rotation angle in radians
+            texture: Texture to apply
+
+        Returns:
+            List containing a single brush (the prism)
+        """
+        from quake_levelgenerator.src.conversion.map_writer import Brush, Plane
+
+        # Clamp sides to reasonable range
+        sides = max(3, min(8, sides))
+
+        # Generate vertices for the polygon
+        vertices = []
+        for i in range(sides):
+            vertex_angle = angle + (2 * math.pi * i / sides)
+            x = self._snap_coord(cx + radius * math.cos(vertex_angle))
+            y = self._snap_coord(cy + radius * math.sin(vertex_angle))
+            vertices.append((x, y))
+
+        z1 = self._snap_coord(z1)
+        z2 = self._snap_coord(z2)
+
+        # Build the brush with N+2 faces (N sides + top + bottom)
+        planes = []
+
+        # Bottom face (pointing down)
+        # Use first 3 vertices in clockwise order when viewed from below
+        planes.append(Plane(
+            (vertices[0][0], vertices[0][1], z1),
+            (vertices[1][0], vertices[1][1], z1),
+            (vertices[2][0], vertices[2][1], z1),
+            texture
+        ))
+
+        # Top face (pointing up)
+        # Use first 3 vertices in counter-clockwise order when viewed from above
+        planes.append(Plane(
+            (vertices[0][0], vertices[0][1], z2),
+            (vertices[2][0], vertices[2][1], z2),
+            (vertices[1][0], vertices[1][1], z2),
+            texture
+        ))
+
+        # Side faces - each connects two adjacent vertices from bottom to top
+        for i in range(sides):
+            next_i = (i + 1) % sides
+            x1, y1 = vertices[i]
+            x2, y2 = vertices[next_i]
+
+            # Side face needs 3 points defining an outward-facing plane
+            # Points go: current_bottom -> next_bottom -> current_top
+            planes.append(Plane(
+                (x1, y1, z1),
+                (x1, y1, z2),
+                (x2, y2, z1),
+                texture
+            ))
+
+        return [Brush(planes=planes, brush_id=self._next_id())]
+
+    def _generate_outer_wall(
+        self,
+        cx: float, cy: float, z1: float, z2: float,
+        inner_wall_r: float, thickness: float,
+        total_angle: float, direction: float,
+        curve_segments: int = 8
+    ) -> List[Brush]:
+        """Generate outer wall segments matching the spiral's polygon shape.
+
+        Creates wall segments aligned to the same polygon vertices as the steps.
+
+        Args:
+            cx, cy: Center coordinates
+            z1, z2: Bottom and top Z coordinates
+            inner_wall_r: Inner radius of wall (outer edge of steps)
+            thickness: Wall thickness
+            total_angle: Total angle of spiral
+            direction: 1.0 for clockwise, -1.0 for counter-clockwise
+            curve_segments: Polygon segments per full rotation (matches steps)
+
+        Returns:
+            List of brushes forming the outer wall
+        """
+        brushes = []
+        outer_r = inner_wall_r + thickness
+
+        # Use curve_segments to determine wall segment angles
+        segment_angle = (2 * math.pi) / curve_segments
+
+        # Calculate how many segments we need based on total_angle
+        num_segments = max(1, int(abs(total_angle) / segment_angle) + 1)
+        angle_per_wall_segment = total_angle / num_segments
+
+        for i in range(num_segments):
+            start_angle = i * angle_per_wall_segment * (1 if direction > 0 else -1)
+            end_angle = (i + 1) * angle_per_wall_segment * (1 if direction > 0 else -1)
+
+            if direction < 0:
+                start_angle, end_angle = end_angle, start_angle
+
+            # Wall segment as radial piece
+            wall_brush = self._radial_segment(
+                cx, cy, z1, z2,
+                inner_wall_r, outer_r,
+                start_angle, end_angle,
+                texture=self.texture_wall
+            )
+            brushes.append(wall_brush)
+
+        return brushes

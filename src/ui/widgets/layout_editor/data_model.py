@@ -280,24 +280,59 @@ class PlacedPrimitive:
         return self._footprint
 
     def occupied_cells(self) -> List[CellCoord]:
-        """Get all cells occupied by this primitive."""
-        if self._footprint is None:
-            # Default 1x1 footprint
+        """Get all cells occupied by this primitive.
+
+        Uses cached footprint for cell calculation.
+        Falls back to PRIMITIVE_FOOTPRINTS lookup when cache is None.
+        """
+        footprint = self._footprint
+
+        # Fallback to PRIMITIVE_FOOTPRINTS if cache is None
+        if footprint is None:
+            from .palette_widget import PRIMITIVE_FOOTPRINTS
+            footprint = PRIMITIVE_FOOTPRINTS.get(self.primitive_type)
+
+        if footprint is None:
+            # Unknown primitive type - default to 1x1
             return [self.origin_cell]
-        return self._footprint.occupied_cells(self.origin_cell, self.rotation)
+
+        return footprint.occupied_cells(self.origin_cell, self.rotation)
 
     def get_portals(self) -> List[Portal]:
-        """Get portals with world positions computed."""
-        if self._footprint is None:
-            return []
-        return self._footprint.portals
+        """Get portals for this primitive.
+
+        First checks cached footprint, then falls back to PRIMITIVE_FOOTPRINTS
+        if cache is None. This ensures portals are available even during
+        timing windows (e.g., after JSON load before footprint restoration).
+        """
+        if self._footprint is not None:
+            return self._footprint.portals
+
+        # Defensive fallback: lookup from PRIMITIVE_FOOTPRINTS
+        from .palette_widget import PRIMITIVE_FOOTPRINTS
+        footprint = PRIMITIVE_FOOTPRINTS.get(self.primitive_type)
+        if footprint:
+            return footprint.portals
+
+        return []
 
     def get_portal_world_cell(self, portal: Portal) -> CellCoord:
-        """Get the world cell position of a portal."""
-        if self._footprint:
+        """Get the world cell position of a portal.
+
+        Uses cached footprint dimensions for rotation calculations.
+        Falls back to PRIMITIVE_FOOTPRINTS lookup when cache is None.
+        """
+        footprint = self._footprint
+
+        # Fallback to PRIMITIVE_FOOTPRINTS if cache is None
+        if footprint is None:
+            from .palette_widget import PRIMITIVE_FOOTPRINTS
+            footprint = PRIMITIVE_FOOTPRINTS.get(self.primitive_type)
+
+        if footprint:
             return portal.world_cell(
                 self.origin_cell, self.rotation,
-                self._footprint.width_cells, self._footprint.depth_cells
+                footprint.width_cells, footprint.depth_cells
             )
         return portal.world_cell(self.origin_cell, self.rotation)
 
@@ -352,11 +387,19 @@ class PlacedPrimitive:
         if portal_id in self.portal_overrides:
             return self.portal_overrides[portal_id].enabled
 
-        # Fall back to footprint default
+        # Try cached footprint
         if self._footprint:
             for portal in self._footprint.portals:
                 if portal.id == portal_id:
                     return portal.enabled
+        else:
+            # Fallback: lookup from PRIMITIVE_FOOTPRINTS when _footprint is None
+            from .palette_widget import PRIMITIVE_FOOTPRINTS
+            footprint = PRIMITIVE_FOOTPRINTS.get(self.primitive_type)
+            if footprint:
+                for portal in footprint.portals:
+                    if portal.id == portal_id:
+                        return portal.enabled
 
         return True
 

@@ -61,6 +61,16 @@ PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
     'Antechamber': (128.0, 'height', 16.0),
     'SecretChamber': (128.0, 'height', 16.0),
 
+    # === MULTI-LEVEL ROOMS (8 total) ===
+    'Amphitheater': (192.0, 'height', 16.0),  # Tiered arena, taller for drama
+    'CatwalkChamber': (256.0, 'height', 16.0),  # Deep pit with catwalks
+    'BalconyRoom': (192.0, 'height', 16.0),  # Needs height for balcony
+    'SunkenChamber': (128.0, 'height', 16.0),  # Standard with sunken floor
+    'LibraryArchive': (384.0, 'room_height', 16.0),  # Very tall with alcoves
+    'Grotto': (192.0, 'height', 16.0),  # Cave with stalactites
+    'RadialShrine': (192.0, 'height', 16.0),  # Ceremonial space with altar
+    'Forge': (192.0, 'height', 16.0),  # Multi-tier industrial
+
     # === STRUCTURAL (5 total) - placed inside rooms ===
     'StraightStaircase': (128.0, 'height_change', 8.0),
     'Arch': (96.0, 'arch_height', 8.0),

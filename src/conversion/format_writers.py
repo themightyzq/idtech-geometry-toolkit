@@ -49,8 +49,14 @@ def normalize_texture_path(texture_path: str, for_format: str = "idtech4") -> st
         >>> normalize_texture_path("BRICK1_5", "idtech1")
         "BRICK1_5"
     """
-    if not texture_path:
-        return texture_path
+    if not isinstance(texture_path, str) or not texture_path:
+        import logging
+        if texture_path is not None and not isinstance(texture_path, str):
+            logging.getLogger(__name__).warning(
+                "normalize_texture_path received non-string input: %r (type=%s), using fallback",
+                texture_path, type(texture_path).__name__,
+            )
+        return "common/caulk"
 
     # Normalize path separators to forward slashes
     normalized = texture_path.replace("\\", "/")

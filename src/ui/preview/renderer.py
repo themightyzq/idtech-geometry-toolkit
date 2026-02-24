@@ -821,6 +821,139 @@ class PreviewRenderer:
         """
         return self._texture_manager
 
+    def render_grid(self, view_matrix: np.ndarray, projection_matrix: np.ndarray):
+        """Render a reference grid on the XY plane at Z=0.
+
+        Grid spacing: 64 units (idTech standard), extent: ±2048 units.
+        Major lines every 512 units, minor lines every 64 units.
+        """
+        if not self._initialized:
+            return
+
+        glUseProgram(0)
+
+        # Set up matrices
+        glMatrixMode(GL_PROJECTION)
+        glLoadMatrixf(np.ascontiguousarray(projection_matrix.T, dtype=np.float32))
+
+        glMatrixMode(GL_MODELVIEW)
+        glLoadMatrixf(np.ascontiguousarray(view_matrix.T, dtype=np.float32))
+
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        extent = 2048
+        minor_step = 64
+        major_step = 512
+
+        # Minor grid lines
+        glLineWidth(1.0)
+        glBegin(GL_LINES)
+        glColor4f(0.5, 0.5, 0.5, 0.15)
+        v = -extent
+        while v <= extent:
+            if v % major_step != 0:
+                # X-axis parallel lines (along X, varying Y)
+                glVertex3f(-extent, v, 0)
+                glVertex3f(extent, v, 0)
+                # Y-axis parallel lines (along Y, varying X)
+                glVertex3f(v, -extent, 0)
+                glVertex3f(v, extent, 0)
+            v += minor_step
+        glEnd()
+
+        # Major grid lines
+        glLineWidth(1.5)
+        glBegin(GL_LINES)
+        glColor4f(0.5, 0.5, 0.5, 0.35)
+        v = -extent
+        while v <= extent:
+            if v % major_step == 0:
+                glVertex3f(-extent, v, 0)
+                glVertex3f(extent, v, 0)
+                glVertex3f(v, -extent, 0)
+                glVertex3f(v, extent, 0)
+            v += minor_step
+        glEnd()
+
+        glLineWidth(1.0)
+        glDisable(GL_BLEND)
+
+    def render_compass(self, view_matrix: np.ndarray, width: int, height: int):
+        """Render an RGB axis compass in the bottom-left corner.
+
+        Rotates with the camera to show spatial orientation.
+        Red = +X, Green = +Y, Blue = +Z.
+        """
+        if not self._initialized:
+            return
+
+        # Save current viewport
+        saved_viewport = glGetIntegerv(GL_VIEWPORT)
+
+        # Set isolated viewport in bottom-left corner
+        size = 60
+        margin = 10
+        glViewport(margin, margin, size, size)
+
+        glUseProgram(0)
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+
+        # Set orthographic projection
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        # Use manual ortho since GLU may not be available
+        l, r, b, t, n, f = -1.5, 1.5, -1.5, 1.5, -10.0, 10.0
+        ortho = np.array([
+            [2.0/(r-l), 0, 0, -(r+l)/(r-l)],
+            [0, 2.0/(t-b), 0, -(t+b)/(t-b)],
+            [0, 0, -2.0/(f-n), -(f+n)/(f-n)],
+            [0, 0, 0, 1.0],
+        ], dtype=np.float32)
+        glLoadMatrixf(np.ascontiguousarray(ortho.T, dtype=np.float32))
+
+        # Rotation-only view matrix (strip translation)
+        rot_view = view_matrix.copy()
+        rot_view[0, 3] = 0.0
+        rot_view[1, 3] = 0.0
+        rot_view[2, 3] = 0.0
+
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadMatrixf(np.ascontiguousarray(rot_view.T, dtype=np.float32))
+
+        # Draw axes
+        glLineWidth(2.0)
+        glBegin(GL_LINES)
+        # X axis - Red
+        glColor3f(1.0, 0.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(1.0, 0, 0)
+        # Y axis - Green
+        glColor3f(0.0, 1.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 1.0, 0)
+        # Z axis - Blue
+        glColor3f(0.0, 0.0, 1.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 1.0)
+        glEnd()
+
+        glLineWidth(1.0)
+
+        # Restore state
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+
+        glEnable(GL_DEPTH_TEST)
+        glViewport(int(saved_viewport[0]), int(saved_viewport[1]),
+                   int(saved_viewport[2]), int(saved_viewport[3]))
+
     def cleanup(self):
         """Clean up OpenGL resources."""
         if not self._initialized:

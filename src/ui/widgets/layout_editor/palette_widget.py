@@ -348,6 +348,76 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
     ),
 
     # ==========================================================================
+    # MULTI-FLOOR ROOMS - Rooms designed to connect multiple floor levels
+    # These rooms have an entrance at z_level=0 and an upper portal at z_level=160
+    # (matching floor separation), allowing them to function as vertical connectors.
+    # ==========================================================================
+    'Amphitheater': PrimitiveFootprint(
+        width_cells=4,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'CatwalkChamber': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,  # Minimum 4 cells for proper internal stairs
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'BalconyRoom': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'SunkenChamber': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,  # Minimum 4 cells for proper internal stairs
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'LibraryArchive': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'Grotto': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,  # Minimum 4 cells for proper internal stairs
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'RadialShrine': PrimitiveFootprint(
+        width_cells=4,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+    'Forge': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=4,  # Minimum 4 cells for proper internal stairs
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0), z_level=0),
+            Portal(id='upper', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3), z_level=160),
+        ]
+    ),
+
+    # ==========================================================================
     # STRUCTURAL - Interior decorations (not shown in layout palette)
     # ==========================================================================
     'StraightStaircase': PrimitiveFootprint(
@@ -421,10 +491,16 @@ PRIMITIVE_CATEGORIES = {
         'StraightHall', 'SquareCorner', 'TJunction', 'Crossroads', 'SecretHall',
     ],
     'Rooms': [
+        # 19 existing rooms - now with optional upper portal support
         'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
         'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
         'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
-        'SecretChamber'
+        'SecretChamber',
+    ],
+    'Multi-Floor Rooms': [
+        # 8 rooms designed for vertical gameplay with upper portals
+        'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+        'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
     ],
 }
 
@@ -432,6 +508,7 @@ CATEGORY_COLORS = {
     'Halls': QColor(70, 130, 180),
     'Structural': QColor(139, 119, 101),
     'Rooms': QColor(148, 103, 189),
+    'Multi-Floor Rooms': QColor(200, 120, 180),  # Purple-pink for vertical
     'Connective': QColor(44, 160, 44),
 }
 

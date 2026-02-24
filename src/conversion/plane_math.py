@@ -84,10 +84,21 @@ class PlaneGeometry:
                           offset_x: float = 0.0, offset_y: float = 0.0,
                           rotation: float = 0.0, scale_x: float = 1.0,
                           scale_y: float = 1.0) -> "PlaneGeometry":
-        """Compute plane from three non-collinear points (winding order matters)."""
+        """Compute plane from three non-collinear points (winding order matters).
+
+        Raises:
+            ValueError: If the three points are collinear (cannot define a plane).
+        """
         v1 = _sub(p2, p1)
         v2 = _sub(p3, p1)
-        normal = _normalize(_cross(v1, v2))
+        cross = _cross(v1, v2)
+        mag = _length(cross)
+        if mag < EPSILON:
+            raise ValueError(
+                f"Collinear points cannot define a plane: "
+                f"p1={p1}, p2={p2}, p3={p3}"
+            )
+        normal = (cross[0] / mag, cross[1] / mag, cross[2] / mag)
         dist = _dot(normal, p1)
         pg = cls(
             normal=normal,

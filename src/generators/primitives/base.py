@@ -195,7 +195,13 @@ class GeometricPrimitive(ABC):
     # ------------------------------------------------------------------
 
     def apply_params(self, params: Dict[str, Any]):
-        """Apply a dict of parameter values (from the GUI or pipeline)."""
+        """Apply a dict of parameter values (from the GUI or pipeline).
+
+        Validates each parameter against the schema: coerces types and clamps
+        numeric values to [min, max] range.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
         schema = self.get_parameter_schema()
         for key, value in params.items():
             if key in ("origin", "rotation", "scale", "texture"):
@@ -209,7 +215,49 @@ class GeometricPrimitive(ABC):
                 # Stored directly on instance for access by _generate_polygonal_walls
                 setattr(self, f"_{key}", value)
             elif key in schema:
-                setattr(self, key, value)
+                spec = schema[key]
+                validated = self._validate_param(key, value, spec, logger)
+                setattr(self, key, validated)
+
+    @staticmethod
+    def _validate_param(key: str, value: Any, spec: Dict[str, Any],
+                        logger: 'logging.Logger') -> Any:
+        """Validate and coerce a single parameter against its schema spec."""
+        expected_type = spec.get("type", "float")
+
+        # Type coercion
+        try:
+            if expected_type == "int":
+                value = int(value)
+            elif expected_type == "float":
+                value = float(value)
+            elif expected_type == "bool":
+                value = bool(value)
+        except (TypeError, ValueError):
+            default = spec.get("default")
+            logger.warning(
+                "Parameter '%s': cannot convert %r to %s, using default %r",
+                key, value, expected_type, default,
+            )
+            return default
+
+        # Range warnings for numeric types (warn but don't clamp — callers
+        # like _configure_geometry_params intentionally set 0 to disable features)
+        if expected_type in ("int", "float"):
+            min_val = spec.get("min")
+            max_val = spec.get("max")
+            if min_val is not None and value < min_val:
+                logger.debug(
+                    "Parameter '%s': value %r below schema min %r",
+                    key, value, min_val,
+                )
+            if max_val is not None and value > max_val:
+                logger.debug(
+                    "Parameter '%s': value %r above schema max %r",
+                    key, value, max_val,
+                )
+
+        return value
 
     # ------------------------------------------------------------------
     # Brush helpers
@@ -1916,3 +1964,529 @@ class GeometricPrimitive(ABC):
             ))
 
         return brushes
+
+    # ------------------------------------------------------------------
+    # Upper Level / Multi-Floor Generation Helpers
+    # ------------------------------------------------------------------
+
+    # Class-level defaults for upper portal parameters (override in subclasses)
+    _default_upper_portal_enabled: bool = False
+    _default_upper_portal_height: float = 64.0
+    _default_stair_style: str = "stairs"
+
+    def _generate_upper_level(
+        self,
+        brushes: List[Brush],
+        ox: float, oy: float, oz: float,
+        room_width: float, room_length: float,
+        room_height: float,
+        upper_z: float,
+        portal_direction: str,
+        portal_width: float = 96.0,
+        portal_height: float = 88.0,
+        stair_style: str = "stairs",
+        wall_thickness: float = 16.0,
+        texture: str = "",
+    ) -> None:
+        """Generate upper platform, portal opening, and internal stairs.
+
+        This helper method creates a second-level platform with portal opening
+        and stairs/ramp for player access. Called by room generate() methods
+        when has_upper_portal=True.
+
+        Args:
+            brushes: List to append generated brushes to
+            ox, oy, oz: Room origin (floor level)
+            room_width: Full room width (not half-width)
+            room_length: Room length (Y extent)
+            room_height: Total room height (ceiling minus floor)
+            upper_z: Z coordinate of upper platform floor
+            portal_direction: Direction of upper portal ("north", "east", "west")
+            portal_width: Width of portal opening
+            portal_height: Height of portal opening
+            stair_style: How player accesses upper level ("stairs", "ramp", "spiral", "none")
+            wall_thickness: Wall thickness (t)
+            texture: Optional texture override
+        """
+        tex = texture or self.params.texture
+        t = wall_thickness
+        hw = room_width / 2  # Half-width
+        pw = portal_width / 2  # Portal half-width
+        ph = portal_height
+        ceiling_z = oz + room_height
+        climb_height = upper_z - oz
+
+        # Determine platform position and dimensions based on portal direction
+        portal_dir = portal_direction.upper()
+
+        # === STAIR CALCULATION (StraightStaircase algorithm) ===
+        # For proper traversability, we need adequate horizontal run.
+        # idTech constraints: max step height 18 units, min step depth 16 units.
+        max_step_height = 18.0  # Absolute maximum for player to climb
+        ideal_step_height = 16.0  # Comfortable step height
+        ideal_step_depth = 24.0
+        min_step_depth = 16.0  # Minimum for player to stand on
+        stair_width = 96.0  # Wide enough for comfortable traversal
+
+        # Calculate available run space (room_length minus platform and entry padding)
+        platform_depth = 64  # Fixed platform depth
+        entry_padding = 32   # Space at front of room
+        available_run = room_length - platform_depth - entry_padding - t
+
+        # Calculate minimum steps needed to stay under max step height
+        min_steps_for_traversability = max(1, math.ceil(climb_height / max_step_height))
+
+        # Calculate step depth if we use minimum steps
+        step_depth_at_min_steps = available_run / min_steps_for_traversability if min_steps_for_traversability > 0 else 0
+
+        # Check if stairs can be made traversable (step_depth >= min_step_depth)
+        can_use_stairs = step_depth_at_min_steps >= min_step_depth
+
+        if can_use_stairs:
+            # Stairs are viable - calculate optimal step count
+            # Start with ideal step height, increase if needed for min_step_depth
+            num_steps = max(1, int(climb_height / ideal_step_height))
+            actual_step_depth = available_run / num_steps if num_steps > 0 else ideal_step_depth
+
+            # If step depth is too small, reduce number of steps
+            if actual_step_depth < min_step_depth and num_steps > 1:
+                num_steps = max(min_steps_for_traversability, int(available_run / min_step_depth))
+                actual_step_depth = available_run / num_steps if num_steps > 0 else min_step_depth
+
+            step_height = climb_height / num_steps
+            # Cap step depth at ideal (no need to be wider than comfortable)
+            actual_step_depth = min(actual_step_depth, ideal_step_depth)
+        else:
+            # Room too small for traversable stairs - force ramp fallback
+            stair_style = "ramp"
+            num_steps = 0
+            actual_step_depth = 0
+            step_height = 0
+
+        # Platform dimensions - spans back of room
+        platform_width = max(portal_width + 2 * t, 96)
+
+        if portal_dir == "NORTH":
+            # Platform on back wall (north), spanning width
+            plat_x1 = ox - hw + t
+            plat_x2 = ox + hw - t
+            plat_y1 = oy + room_length - platform_depth - t
+            plat_y2 = oy + room_length - t
+            # Stairs start from front of room, going north to platform
+            stair_start_x = ox
+            stair_start_y = oy + 32  # Start 32 units into room
+        elif portal_dir == "EAST":
+            # Platform in back-right corner
+            plat_x1 = ox + hw - platform_width - t
+            plat_x2 = ox + hw - t
+            plat_y1 = oy + room_length - platform_depth - t
+            plat_y2 = oy + room_length - t
+            # Stairs along east wall
+            stair_start_x = ox + hw - stair_width / 2 - t
+            stair_start_y = oy + 32
+        elif portal_dir == "WEST":
+            # Platform in back-left corner
+            plat_x1 = ox - hw + t
+            plat_x2 = ox - hw + platform_width + t
+            plat_y1 = oy + room_length - platform_depth - t
+            plat_y2 = oy + room_length - t
+            # Stairs along west wall
+            stair_start_x = ox - hw + stair_width / 2 + t
+            stair_start_y = oy + 32
+        else:
+            # Default to north if invalid direction
+            portal_dir = "NORTH"
+            plat_x1 = ox - hw + t
+            plat_x2 = ox + hw - t
+            plat_y1 = oy + room_length - platform_depth - t
+            plat_y2 = oy + room_length - t
+            stair_start_x = ox
+            stair_start_y = oy + 32
+
+        # === UPPER PLATFORM FLOOR ===
+        brushes.append(self._box(
+            plat_x1, plat_y1, upper_z - t,
+            plat_x2, plat_y2, upper_z,
+            texture=self.texture_floor if hasattr(self, 'texture_floor') else tex
+        ))
+
+        # === PORTAL OPENING in appropriate wall ===
+        # The room's generate() method handles wall creation, but we need to
+        # tell it where to cut the portal. We add a lintel brush above the portal.
+        portal_cx = (plat_x1 + plat_x2) / 2  # Center of platform
+        portal_cy = (plat_y1 + plat_y2) / 2
+
+        if portal_dir == "NORTH":
+            # Lintel above portal at back wall
+            if upper_z + ph < ceiling_z:
+                brushes.append(self._box(
+                    portal_cx - pw, oy + room_length - t, upper_z + ph,
+                    portal_cx + pw, oy + room_length, ceiling_z,
+                    texture=self.texture_wall if hasattr(self, 'texture_wall') else tex
+                ))
+        elif portal_dir == "EAST":
+            # Lintel above portal at right wall
+            if upper_z + ph < ceiling_z:
+                brushes.append(self._box(
+                    ox + hw - t, portal_cy - pw, upper_z + ph,
+                    ox + hw, portal_cy + pw, ceiling_z,
+                    texture=self.texture_wall if hasattr(self, 'texture_wall') else tex
+                ))
+        elif portal_dir == "WEST":
+            # Lintel above portal at left wall
+            if upper_z + ph < ceiling_z:
+                brushes.append(self._box(
+                    ox - hw, portal_cy - pw, upper_z + ph,
+                    ox - hw + t, portal_cy + pw, ceiling_z,
+                    texture=self.texture_wall if hasattr(self, 'texture_wall') else tex
+                ))
+
+        # === INTERNAL STAIRS (StraightStaircase algorithm) ===
+        # Generate proper stairs with adequate width, step depth, and full run
+        # Uses actual_step_depth and num_steps calculated above (already fit to room)
+        if stair_style != "none" and stair_style != "ramp":
+            for i in range(num_steps):
+                step_y = stair_start_y + i * actual_step_depth
+                step_z = oz + i * step_height
+
+                # Each step is a solid box (StraightStaircase style)
+                brushes.append(self._box(
+                    stair_start_x - stair_width / 2, step_y, step_z,
+                    stair_start_x + stair_width / 2, step_y + actual_step_depth, step_z + step_height,
+                    texture=tex
+                ))
+        elif stair_style == "ramp":
+            # Generate ramp using existing helper
+            brushes.extend(self._generate_internal_ramp(
+                stair_start_x, stair_start_y, oz,
+                stair_start_x, plat_y1, upper_z,
+                texture=tex
+            ))
+
+        # === RAILING/EDGE for safety (optional low wall) ===
+        railing_height = 32.0
+        railing_thickness = 8.0
+
+        if portal_dir == "NORTH":
+            # Railing on south edge of platform
+            brushes.append(self._box(
+                plat_x1, plat_y1, upper_z,
+                plat_x2, plat_y1 + railing_thickness, upper_z + railing_height,
+                texture=tex
+            ))
+        elif portal_dir == "EAST":
+            # Railing on west edge of platform
+            brushes.append(self._box(
+                plat_x1, plat_y1, upper_z,
+                plat_x1 + railing_thickness, plat_y2, upper_z + railing_height,
+                texture=tex
+            ))
+        elif portal_dir == "WEST":
+            # Railing on east edge of platform
+            brushes.append(self._box(
+                plat_x2 - railing_thickness, plat_y1, upper_z,
+                plat_x2, plat_y2, upper_z + railing_height,
+                texture=tex
+            ))
+
+    def _generate_internal_stairs(
+        self,
+        room_ox: float, room_oy: float, room_oz: float,
+        start_x: float, start_y: float,
+        target_x: float, target_y: float,
+        climb_height: float,
+        style: str,
+        wall_thickness: float = 16.0,
+        texture: str = "",
+    ) -> List[Brush]:
+        """Generate stairs or ramp from floor to upper platform.
+
+        Args:
+            room_ox, room_oy, room_oz: Room origin for reference
+            start_x, start_y: Where stairs begin (at floor level)
+            target_x, target_y: Where stairs end (at platform edge)
+            climb_height: Total height to climb
+            style: "stairs", "ramp", or "spiral"
+            wall_thickness: For structural calculations
+            texture: Texture override
+
+        Returns:
+            List of brushes forming the stair/ramp structure
+        """
+        tex = texture or self.params.texture
+        brushes: List[Brush] = []
+
+        if style == "ramp":
+            return self._generate_internal_ramp(
+                start_x, start_y, room_oz,
+                target_x, target_y, room_oz + climb_height,
+                texture=tex
+            )
+        elif style == "spiral":
+            return self._generate_internal_spiral(
+                start_x, start_y, room_oz,
+                climb_height,
+                texture=tex
+            )
+        else:
+            # Default: standard stairs
+            return self._generate_internal_box_stairs(
+                start_x, start_y, room_oz,
+                target_x, target_y, room_oz + climb_height,
+                texture=tex
+            )
+
+    def _generate_internal_box_stairs(
+        self,
+        start_x: float, start_y: float, start_z: float,
+        target_x: float, target_y: float, end_z: float,
+        texture: str = "",
+    ) -> List[Brush]:
+        """Generate a straight staircase using box steps.
+
+        Uses 16-unit step height (idTech comfortable climb) and 24-unit depth.
+
+        Args:
+            start_x, start_y, start_z: Stair starting position (bottom)
+            target_x, target_y, end_z: Stair ending position (top)
+            texture: Texture for step surfaces
+
+        Returns:
+            List of brush steps
+        """
+        tex = texture or self.params.texture
+        brushes: List[Brush] = []
+
+        # Step dimensions per idTech constraints (CLAUDE.md §4)
+        step_height = 16.0  # Comfortable climb
+        step_depth = 24.0
+        stair_width = 48.0
+
+        climb_height = end_z - start_z
+        num_steps = max(1, int(climb_height / step_height))
+        actual_step_height = climb_height / num_steps
+
+        # Calculate stair direction
+        dx = target_x - start_x
+        dy = target_y - start_y
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1:
+            # Stairs going straight up (no horizontal movement)
+            dx, dy = 0, 1
+            dist = 1
+
+        # Normalize direction
+        nx = dx / dist
+        ny = dy / dist
+
+        # Generate steps
+        for i in range(num_steps):
+            step_z = start_z + i * actual_step_height
+            step_x = start_x + nx * i * step_depth
+            step_y = start_y + ny * i * step_depth
+
+            # Step brush - box from current height to top
+            # This creates a solid fill beneath each step (proper for idTech)
+            brushes.append(self._box(
+                step_x - stair_width / 2, step_y, start_z,
+                step_x + stair_width / 2, step_y + step_depth, step_z + actual_step_height,
+                texture=tex
+            ))
+
+        return brushes
+
+    def _generate_internal_ramp(
+        self,
+        start_x: float, start_y: float, start_z: float,
+        target_x: float, target_y: float, end_z: float,
+        texture: str = "",
+    ) -> List[Brush]:
+        """Generate a ramp from floor to upper level.
+
+        Uses wedge brush for angled surface. Ramp angle limited to 45° per idTech.
+
+        Args:
+            start_x, start_y, start_z: Ramp starting position (bottom)
+            target_x, target_y, end_z: Ramp ending position (top)
+            texture: Texture for ramp surface
+
+        Returns:
+            List containing the ramp wedge brush
+        """
+        tex = texture or self.params.texture
+        brushes: List[Brush] = []
+
+        ramp_width = 96.0  # Match stair width for comfortable traversal
+        climb_height = end_z - start_z
+
+        # Calculate direction
+        dx = target_x - start_x
+        dy = target_y - start_y
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        # Ensure ramp angle <= 45° (ramp length >= climb height)
+        min_length = climb_height  # 45° angle
+        if dist < min_length:
+            # Extend the ramp to achieve safe angle
+            scale = min_length / max(dist, 1)
+            dx *= scale
+            dy *= scale
+
+        # Determine ramp axis based on dominant direction
+        if abs(dy) >= abs(dx):
+            # Y-axis ramp (most common - facing north/south)
+            if dy >= 0:
+                # Ramp going north (Y increases)
+                brushes.append(self._wedge(
+                    start_x - ramp_width / 2, start_y, start_z,
+                    start_x + ramp_width / 2, start_y + abs(dy), end_z,
+                    ramp_axis="y", texture=tex
+                ))
+            else:
+                # Ramp going south (Y decreases) - flip coordinates
+                brushes.append(self._wedge(
+                    start_x - ramp_width / 2, start_y + dy, start_z,
+                    start_x + ramp_width / 2, start_y, end_z,
+                    ramp_axis="y", texture=tex
+                ))
+        else:
+            # X-axis ramp
+            if dx >= 0:
+                # Ramp going east (X increases)
+                brushes.append(self._wedge(
+                    start_x, start_y - ramp_width / 2, start_z,
+                    start_x + abs(dx), start_y + ramp_width / 2, end_z,
+                    ramp_axis="x", texture=tex
+                ))
+            else:
+                # Ramp going west (X decreases)
+                brushes.append(self._wedge(
+                    start_x + dx, start_y - ramp_width / 2, start_z,
+                    start_x, start_y + ramp_width / 2, end_z,
+                    ramp_axis="x", texture=tex
+                ))
+
+        return brushes
+
+    def _generate_internal_spiral(
+        self,
+        center_x: float, center_y: float, start_z: float,
+        climb_height: float,
+        texture: str = "",
+    ) -> List[Brush]:
+        """Generate an internal spiral staircase.
+
+        Creates a compact spiral around a central post.
+
+        Args:
+            center_x, center_y: Center of spiral
+            start_z: Starting Z coordinate (floor)
+            climb_height: Total height to climb
+            texture: Texture for steps
+
+        Returns:
+            List of brushes forming spiral stairs
+        """
+        tex = texture or self.params.texture
+        brushes: List[Brush] = []
+
+        # Spiral parameters
+        post_radius = 16.0
+        inner_radius = post_radius + 4
+        outer_radius = 48.0
+
+        step_height = 12.0  # Per step
+        steps_per_rotation = 12
+        angle_per_step = (2 * math.pi) / steps_per_rotation
+
+        num_steps = max(1, int(climb_height / step_height))
+        end_z = start_z + climb_height
+
+        # Central post
+        brushes.append(self._box(
+            center_x - post_radius, center_y - post_radius, start_z,
+            center_x + post_radius, center_y + post_radius, end_z,
+            texture=tex
+        ))
+
+        # Generate spiral steps
+        for i in range(num_steps):
+            step_z = start_z + i * step_height
+            angle1 = i * angle_per_step
+            angle2 = (i + 1) * angle_per_step
+
+            # Use radial segment for pie-slice step
+            brushes.append(self._radial_segment(
+                center_x, center_y,
+                step_z, step_z + step_height,
+                inner_radius, outer_radius,
+                angle1, angle2,
+                texture=tex
+            ))
+
+        return brushes
+
+    def _get_upper_portal_wall_position(
+        self,
+        ox: float, oy: float,
+        room_width: float, room_length: float,
+        upper_z: float,
+        portal_direction: str,
+        portal_width: float = 96.0,
+    ) -> Dict[str, float]:
+        """Calculate the position of the upper portal for wall generation.
+
+        Returns coordinates needed to cut the portal opening in the appropriate wall.
+
+        Args:
+            ox, oy: Room origin
+            room_width: Full room width
+            room_length: Room length
+            upper_z: Upper portal floor Z
+            portal_direction: "north", "east", or "west"
+            portal_width: Portal width
+
+        Returns:
+            Dict with portal position info (portal_x, portal_y, wall_axis)
+        """
+        hw = room_width / 2
+        pw = portal_width / 2
+        portal_dir = portal_direction.upper()
+
+        if portal_dir == "NORTH":
+            return {
+                'portal_x': ox,
+                'portal_y': oy + room_length,
+                'portal_z': upper_z,
+                'wall_axis': 'x',  # Portal cut along X axis
+                'min_x': ox - pw,
+                'max_x': ox + pw,
+            }
+        elif portal_dir == "EAST":
+            return {
+                'portal_x': ox + hw,
+                'portal_y': oy + room_length * 0.75,  # Back portion
+                'portal_z': upper_z,
+                'wall_axis': 'y',  # Portal cut along Y axis
+                'min_y': oy + room_length * 0.75 - pw,
+                'max_y': oy + room_length * 0.75 + pw,
+            }
+        elif portal_dir == "WEST":
+            return {
+                'portal_x': ox - hw,
+                'portal_y': oy + room_length * 0.75,
+                'portal_z': upper_z,
+                'wall_axis': 'y',
+                'min_y': oy + room_length * 0.75 - pw,
+                'max_y': oy + room_length * 0.75 + pw,
+            }
+        else:
+            # Default north
+            return {
+                'portal_x': ox,
+                'portal_y': oy + room_length,
+                'portal_z': upper_z,
+                'wall_axis': 'x',
+                'min_x': ox - pw,
+                'max_x': ox + pw,
+            }

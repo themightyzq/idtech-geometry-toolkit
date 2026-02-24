@@ -160,6 +160,42 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 
     # ==========================================================================
+    # MULTI-FLOOR ROOMS - Vertical connectivity rooms
+    # Only random_seed is safe (upper_portal params are critical for alignment)
+    # ==========================================================================
+    'Amphitheater': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'CatwalkChamber': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'BalconyRoom': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'SunkenChamber': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'LibraryArchive': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'Grotto': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'RadialShrine': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'Forge': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    # ==========================================================================
     # HALLS - Minimal randomization (portal alignment critical)
     # Only random_seed is safe for halls
     # ==========================================================================

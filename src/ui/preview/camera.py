@@ -34,6 +34,7 @@ class OrbitCamera:
         # Sensitivity
         self.rotate_sensitivity = 0.3
         self.move_speed = 8.0
+        self.speed_multiplier = 1.0  # Range: 0.1 to 10.0
 
         # View/projection matrices
         self.fov = 45.0
@@ -229,8 +230,8 @@ class OrbitCamera:
 
         # Calculate movement
         movement = np.zeros(3, dtype=np.float32)
-        movement += forward * forward_amount * self.move_speed
-        movement += right * right_amount * self.move_speed
-        movement += world_up * up_amount * self.move_speed
+        movement += forward * forward_amount * self.move_speed * self.speed_multiplier
+        movement += right * right_amount * self.move_speed * self.speed_multiplier
+        movement += world_up * up_amount * self.move_speed * self.speed_multiplier
 
         self.position += movement

@@ -432,6 +432,7 @@ class LayoutEditorWidget(QWidget):
         self._command_manager = CommandManager()
         self._is_3d_view = False
         self._show_flow = False
+        self._layout_dirty = False  # Tracks unsaved changes
         self._setup_ui()
         self._connect_signals()
 
@@ -612,6 +613,14 @@ class LayoutEditorWidget(QWidget):
         # Floor level UI removed, this is kept for signal compatibility
         pass
 
+    def execute_external_command(self, command: Command):
+        """Execute a command from an external source (e.g. quad canvas).
+
+        Routes through the same command pipeline as internal commands,
+        ensuring undo/redo, layout modification, and UI updates all happen.
+        """
+        self._on_command_requested(command)
+
     def _on_command_requested(self, command: Command):
         """Handle a command request from canvas or property editor."""
         if self._command_manager.execute(command, self._layout):
@@ -644,6 +653,10 @@ class LayoutEditorWidget(QWidget):
 
     def _on_selection_cleared(self):
         """Handle selection cleared."""
+        self.clear_selection()
+
+    def clear_selection(self):
+        """Clear property/portal editors and reset status. Public API for external callers."""
         self._property_editor.set_primitive(None)
         self._portal_editor.set_primitive(None)
         self._status_label.setText("Ready")
@@ -748,11 +761,16 @@ class LayoutEditorWidget(QWidget):
 
     def _on_layout_modified(self):
         """Called after layout is modified to update UI state."""
+        self._layout_dirty = True
         # Note: Validation panel is updated via layout_changed signal in main window
         self._update_undo_redo_state()
         self._update_flow_metrics()
         self.layout_changed.emit()
         self._update_preview()
+
+    def has_unsaved_changes(self) -> bool:
+        """Return True if the layout has unsaved modifications."""
+        return self._layout_dirty and bool(self._layout.primitives)
 
     def _update_undo_redo_state(self):
         """Update enabled state and emit signal for menu bar updates."""
@@ -898,6 +916,7 @@ class LayoutEditorWidget(QWidget):
         self._canvas.clear_layout()
         self._layout = self._canvas.get_layout()
         self._command_manager.clear()  # Clear undo/redo history
+        self._layout_dirty = False
         self._property_editor.set_primitive(None)
         self._update_undo_redo_state()
         self._status_label.setText("New layout created")
@@ -923,6 +942,7 @@ class LayoutEditorWidget(QWidget):
             with open(file_path, 'w') as f:
                 json.dump(data, f, indent=2)
 
+            self._layout_dirty = False
             self._status_label.setText(f"Saved: {Path(file_path).name}")
             self.file_saved.emit(file_path)
         except Exception as e:
@@ -963,6 +983,7 @@ class LayoutEditorWidget(QWidget):
 
             self.set_layout(layout)
             self._command_manager.clear()  # Clear undo/redo history on load
+            self._layout_dirty = False
             self._update_undo_redo_state()
             self._status_label.setText(f"Loaded: {Path(file_path).name}")
             self.file_loaded.emit(file_path)
@@ -1012,6 +1033,7 @@ class LayoutEditorWidget(QWidget):
 <tr><td style="padding: 4px;"><b>Scroll</b></td><td style="padding: 4px;">Zoom (trackpad: two-finger scroll)</td></tr>
 <tr><td style="padding: 4px;"><b>Ctrl++ / Ctrl+-</b></td><td style="padding: 4px;">Zoom in/out</td></tr>
 <tr><td style="padding: 4px;"><b>F</b></td><td style="padding: 4px;">Fit view to content</td></tr>
+<tr><td style="padding: 4px;"><b>G</b></td><td style="padding: 4px;">Focus on selected module</td></tr>
 <tr><td style="padding: 4px;"><b>Ctrl+F</b></td><td style="padding: 4px;">Toggle flow visualization</td></tr>
 <tr><td style="padding: 4px;"><b>Ctrl+3</b></td><td style="padding: 4px;">Toggle 3D preview</td></tr>
 <tr><td style="padding: 4px;"><b>F1</b></td><td style="padding: 4px;">Show this help</td></tr>
@@ -1085,6 +1107,7 @@ class LayoutEditorWidget(QWidget):
 
             self.set_layout(layout)
             self._command_manager.clear()  # Clear undo/redo history on load
+            self._layout_dirty = False
             self._update_undo_redo_state()
             self._status_label.setText(f"Loaded: {Path(file_path).name}")
             self.file_loaded.emit(file_path)
@@ -1129,6 +1152,14 @@ class LayoutEditorWidget(QWidget):
     def set_3d_preview(self, checked: bool):
         """Set 3D preview state (public API for menu)."""
         self._on_3d_preview_toggled(checked)
+
+    def set_floor_filter(self, z_offset):
+        """Set floor filter to highlight primitives at a specific z_offset.
+
+        Args:
+            z_offset: Z-offset to highlight, or None to show all floors
+        """
+        self._canvas.set_floor_filter(z_offset)
 
     def zoom_in(self):
         """Zoom in on the canvas (public API for menu)."""

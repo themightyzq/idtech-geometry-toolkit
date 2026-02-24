@@ -33,6 +33,8 @@ def _debug(msg):
 class GLWidget(QOpenGLWidget):
     """Core OpenGL widget for 3D rendering."""
 
+    camera_stats_changed = pyqtSignal(str)
+
     def __init__(self, parent=None):
         _debug("GLWidget.__init__ starting")
         # Set up OpenGL format - use minimal settings for macOS compatibility
@@ -79,6 +81,9 @@ class GLWidget(QOpenGLWidget):
         self._movement_timer = QTimer()
         self._movement_timer.timeout.connect(self._process_movement)
         # Timer will be started in initializeGL()
+
+        # Frame counter for throttled stats updates
+        self._frame_count = 0
 
         _debug("GLWidget.__init__ complete")
 
@@ -130,6 +135,17 @@ class GLWidget(QOpenGLWidget):
         proj = self.camera.get_projection_matrix()
         cam_pos = self.camera.get_position()
         self.renderer.render(view, proj, cam_pos)
+        self.renderer.render_grid(view, proj)
+        self.renderer.render_compass(view, self.width(), self.height())
+
+        # Emit camera stats at ~4Hz
+        self._frame_count += 1
+        if self._frame_count % 15 == 0:
+            pos = self.camera.position
+            spd = self.camera.speed_multiplier
+            self.camera_stats_changed.emit(
+                f"X:{pos[0]:.0f} Y:{pos[1]:.0f} Z:{pos[2]:.0f} | Speed: {spd:.1f}x"
+            )
 
     def set_mesh(self, mesh: RenderMesh, wireframe_data=None, surface_meshes: Optional[SurfaceMeshes] = None):
         """Update the mesh to render.
@@ -229,6 +245,9 @@ class GLWidget(QOpenGLWidget):
         # Treat Alt/Option+Left as middle-button (for trackpad users)
         if event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier:
             self._mouse_button = Qt.MiddleButton
+        # Treat Ctrl+Left as right-button (mouselook for trackpad)
+        elif event.button() == Qt.LeftButton and event.modifiers() & Qt.ControlModifier:
+            self._mouse_button = Qt.RightButton
         else:
             self._mouse_button = event.button()
         event.accept()
@@ -270,6 +289,17 @@ class GLWidget(QOpenGLWidget):
             event.accept()
             return
 
+        # RMB held + scroll → adjust camera speed multiplier
+        if self._mouse_button == Qt.RightButton:
+            if delta > 0:
+                self.camera.speed_multiplier *= 1.2
+            else:
+                self.camera.speed_multiplier *= 0.83
+            self.camera.speed_multiplier = max(0.1, min(10.0, self.camera.speed_multiplier))
+            self.update()
+            event.accept()
+            return
+
         # Reduced sensitivity for smoother trackpad experience
         # Scale factor based on delta magnitude instead of fixed multiplier
         self.camera.zoom(-delta * 0.0005)
@@ -300,6 +330,12 @@ class GLWidget(QOpenGLWidget):
         if Qt.Key_E in self._held_keys:
             up += 1.0
 
+        # Shift-to-Sprint: 2x speed
+        if Qt.Key_Shift in self._held_keys:
+            forward *= 2.0
+            right *= 2.0
+            up *= 2.0
+
         if forward != 0.0 or right != 0.0 or up != 0.0:
             self.camera.move_continuous(forward, right, up)
             self.update()
@@ -307,8 +343,8 @@ class GLWidget(QOpenGLWidget):
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
 
-        # Track WASD + Q/E for continuous movement
-        if key in (Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D, Qt.Key_Q, Qt.Key_E):
+        # Track WASD + Q/E + Shift for continuous movement
+        if key in (Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D, Qt.Key_Q, Qt.Key_E, Qt.Key_Shift):
             self._held_keys.add(key)
             event.accept()
             return
@@ -328,6 +364,13 @@ class GLWidget(QOpenGLWidget):
             self.set_preset_view('bottom')
         elif key == Qt.Key_F:
             self.fit_to_bounds()
+        elif key == Qt.Key_Home:
+            self.camera.speed_multiplier = 1.0
+            self.fit_to_bounds()
+        elif key == Qt.Key_H:
+            parent = self.parent()
+            if hasattr(parent, 'toggle_hints'):
+                parent.toggle_hints()
         else:
             super().keyPressEvent(event)
             return
@@ -379,6 +422,51 @@ class PreviewWidget(QWidget):
         self._gl_widget = GLWidget()
         layout.addWidget(self._gl_widget, stretch=1)
 
+        # Camera control hints overlay
+        self._hints_label = QLabel(
+            "RMB+Drag: Look | WASD: Move | Shift: Sprint | Scroll: Zoom (RMB+Scroll: Speed) | F/Home: Fit | 1-6: Views | H: Hide",
+            self._gl_widget,
+        )
+        self._hints_label.setStyleSheet(
+            "QLabel {"
+            "  background: rgba(0, 0, 0, 160);"
+            "  color: rgba(255, 255, 255, 200);"
+            "  padding: 6px 12px;"
+            "  border-radius: 4px;"
+            "  font-size: 11pt;"
+            "}"
+        )
+        self._hints_label.setAlignment(Qt.AlignCenter)
+        self._hints_label.adjustSize()
+        self._hints_label.move(8, 8)
+        self._hints_visible = True
+
+        # Show hints button (small "?" in corner, visible when hints are hidden)
+        self._hints_btn = QPushButton("?", self._gl_widget)
+        self._hints_btn.setFixedSize(24, 24)
+        self._hints_btn.setToolTip("Show camera controls (H)")
+        self._hints_btn.setStyleSheet(
+            "QPushButton { background: rgba(0,0,0,160); color: white;"
+            "  border: none; border-radius: 12px; font-weight: bold; font-size: 12pt; }"
+            "QPushButton:hover { background: rgba(80,80,80,200); }"
+        )
+        self._hints_btn.clicked.connect(self._show_hints)
+        self._hints_btn.hide()
+
+        # Auto-hide hints after 10 seconds on first show
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("idTechGeometryToolkit", "MainWindow")
+        if settings.value("hints_shown_once", False, type=bool):
+            self._hints_label.hide()
+            self._hints_btn.show()
+            self._hints_visible = False
+        else:
+            self._hints_auto_hide = QTimer()
+            self._hints_auto_hide.setSingleShot(True)
+            self._hints_auto_hide.timeout.connect(self._auto_hide_hints)
+            self._hints_auto_hide.start(10000)
+            settings.setValue("hints_shown_once", True)
+
         # Toolbar
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(4, 4, 4, 4)
@@ -406,6 +494,11 @@ class PreviewWidget(QWidget):
         self._textured_btn.setToolTip("Textured view (uses Wall texture from Edit > Texture Settings)")
         toolbar.addWidget(self._textured_btn)
 
+        self._texwire_btn = QPushButton("Tex+Wire")
+        self._texwire_btn.clicked.connect(lambda: self._set_mode(RenderMode.TEXTURED_WIREFRAME))
+        self._texwire_btn.setToolTip("Textured with wireframe overlay")
+        toolbar.addWidget(self._texwire_btn)
+
         toolbar.addStretch()
 
         # Fit button
@@ -418,6 +511,12 @@ class PreviewWidget(QWidget):
         self._stats_label = QLabel("")
         self._stats_label.setStyleSheet("color: #a0a0a0; font-size: 11pt;")
         toolbar.addWidget(self._stats_label)
+
+        # Camera position/speed label
+        self._camera_label = QLabel("")
+        self._camera_label.setStyleSheet("color: #a0a0a0; font-size: 11pt;")
+        toolbar.addWidget(self._camera_label)
+        self._gl_widget.camera_stats_changed.connect(self._camera_label.setText)
 
         layout.addLayout(toolbar)
 
@@ -471,8 +570,8 @@ class PreviewWidget(QWidget):
         self._solid_btn.setStyleSheet(self._get_toolbar_btn_style(self._current_render_mode == RenderMode.SOLID))
         self._wire_btn.setStyleSheet(self._get_toolbar_btn_style(self._current_render_mode == RenderMode.WIREFRAME))
         self._both_btn.setStyleSheet(self._get_toolbar_btn_style(self._current_render_mode == RenderMode.SOLID_WIREFRAME))
-        self._textured_btn.setStyleSheet(self._get_toolbar_btn_style(
-            self._current_render_mode in (RenderMode.TEXTURED, RenderMode.TEXTURED_WIREFRAME)))
+        self._textured_btn.setStyleSheet(self._get_toolbar_btn_style(self._current_render_mode == RenderMode.TEXTURED))
+        self._texwire_btn.setStyleSheet(self._get_toolbar_btn_style(self._current_render_mode == RenderMode.TEXTURED_WIREFRAME))
 
     def _get_texture_from_settings(self) -> Optional[str]:
         """Get a valid texture file path from Texture Settings.
@@ -628,10 +727,15 @@ class PreviewWidget(QWidget):
             self._gl_widget.fit_to_bounds()
             self._should_auto_fit = False
 
-        # Update stats
-        self._stats_label.setText(
-            f"{len(brushes)} brushes | {mesh.triangle_count} tris | {mesh.vertex_count} verts"
-        )
+        # Update stats with bounding box dimensions
+        stats_text = f"{len(brushes)} brushes | {mesh.triangle_count} tris | {mesh.vertex_count} verts"
+        if mesh.vertex_count > 0:
+            bmin, bmax = mesh.bounds_min, mesh.bounds_max
+            w = bmax[0] - bmin[0]
+            d = bmax[1] - bmin[1]
+            h = bmax[2] - bmin[2]
+            stats_text += f" | Size: {w:.0f}x{d:.0f}x{h:.0f}"
+        self._stats_label.setText(stats_text)
 
     def set_brushes(self, brushes: List[Brush]):
         """Directly set brushes to preview (for layout mode)."""
@@ -648,6 +752,29 @@ class PreviewWidget(QWidget):
             texture_path: Path to texture file, or None to disable
         """
         self._gl_widget.set_texture(texture_path)
+
+    def _auto_hide_hints(self):
+        """Auto-hide camera hints after timeout."""
+        self._hide_hints()
+
+    def _hide_hints(self):
+        """Hide the camera control hints overlay."""
+        self._hints_label.hide()
+        self._hints_btn.show()
+        self._hints_visible = False
+
+    def _show_hints(self):
+        """Show the camera control hints overlay."""
+        self._hints_label.show()
+        self._hints_btn.hide()
+        self._hints_visible = True
+
+    def toggle_hints(self):
+        """Toggle camera hints visibility (called on H key)."""
+        if self._hints_visible:
+            self._hide_hints()
+        else:
+            self._show_hints()
 
     def cleanup(self):
         """Clean up resources."""

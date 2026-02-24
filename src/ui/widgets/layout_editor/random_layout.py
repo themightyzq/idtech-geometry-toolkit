@@ -42,22 +42,122 @@ HALL_TYPES = ['StraightHall', 'TJunction', 'Crossroads', 'SquareCorner']
 ROOM_TYPES = [
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage', 'GreatHall',
     'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
-    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber'
+    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
+    # Multi-Floor Rooms (8 rooms with internal upper portals and stairs)
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
 ]
 # Rooms that are too tall for multi-floor layouts with 160-unit floor separation.
 # Formula: height + floor_thickness + ceiling_thickness must be <= 160
 # Rooms with thick walls (t > 16) also need extra separation.
 # These rooms exceed the safe limit and would collide with adjacent floor geometry.
 TALL_ROOMS = [
-    'Tower',      # height=256, t=16 (needs 288 separation)
+    'Tower',      # height=384, t=16 (needs 416 separation)
     'Sanctuary',  # nave_height=192, t=16 (needs 224 separation)
     'GreatHall',  # height=192, t=16 (needs 224 separation)
     'Stronghold', # height=192, t=32 (needs 256 separation)
-    'Arena',      # height=160, t=16 (needs 192 separation)
-    'Vault',      # height=128, t=24 (needs 176 separation - thick walls)
+    'Arena',      # height=128, t=16 (needs 160 separation)
+    'Vault',      # height=112, t=24 (needs 160 separation - thick walls)
 ]
+# Note: Multi-Floor Rooms are now ALSO excluded from non-top floors (see below).
+
+# Rooms that exceed 160 units total height (including wall thickness)
+# and would collide with primitives on the floor above.
+# Multi-floor rooms have internal stairs and span z_level=0 to z_level=160,
+# but their total geometry height exceeds FLOOR_SEPARATION:
+# - Amphitheater: height=192, t=16 -> total=224 units
+# - CatwalkChamber: height=256, t=16 -> total=288 units
+# - BalconyRoom: height=192, t=16 -> total=224 units
+# - SunkenChamber: height=128, t=16 -> total=160 units (borderline safe)
+# - LibraryArchive: height=384, t=16 -> total=416 units
+# - Grotto: height=192, t=16 -> total=224 units
+# - RadialShrine: height=192, t=16 -> total=224 units
+# - Forge: height=192, t=16 -> total=224 units
+# These rooms should ONLY be placed on the topmost floor to avoid collisions.
+
+# Multi-floor room types - these have upper portals that connect to higher floors
+MULTI_FLOOR_ROOM_TYPES = [
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+]
+
+# Floor separation in units (must match FLOOR_LEVELS delta)
+FLOOR_SEPARATION = 160
+
 # Secret room type - placed based on secret_room_frequency
 SECRET_ROOM_TYPE = 'SecretChamber'
+
+
+def _collect_upper_portals_from_lower_floor(
+    layout: 'DungeonLayout',
+    lower_floor_z: float,
+    upper_floor_z: float,
+) -> List[Tuple[str, str, 'CellCoord', 'PortalDirection']]:
+    """Collect unconnected upper portals from multi-floor rooms on the lower floor.
+
+    Multi-floor rooms have entrance at z_level=0 and upper portal at z_level=160.
+    When the room is placed at lower_floor_z, its upper portal is at lower_floor_z + 160.
+    If upper_floor_z == lower_floor_z + 160, these upper portals can connect to the upper floor.
+
+    Args:
+        layout: The dungeon layout with placed primitives
+        lower_floor_z: Z-offset of the lower floor
+        upper_floor_z: Z-offset of the upper floor
+
+    Returns:
+        List of (prim_id, portal_id, world_cell, world_dir) for open upper portals
+    """
+    upper_portals = []
+
+    for prim in layout.primitives.values():
+        # Only consider multi-floor rooms on the lower floor
+        if prim.primitive_type not in MULTI_FLOOR_ROOM_TYPES:
+            continue
+        if abs(prim.z_offset - lower_floor_z) > 2:  # tolerance check
+            continue
+
+        # Get footprint to find upper portal
+        footprint = PRIMITIVE_FOOTPRINTS.get(prim.primitive_type)
+        if footprint is None:
+            continue
+
+        # Find the 'upper' portal (z_level=160)
+        upper_portal = None
+        for portal in footprint.portals:
+            if portal.id == 'upper' and abs(portal.z_level - FLOOR_SEPARATION) < 2:
+                upper_portal = portal
+                break
+
+        if upper_portal is None:
+            continue
+
+        # Check if portal z matches upper floor (within tolerance)
+        portal_world_z = prim.z_offset + upper_portal.z_level
+        if abs(portal_world_z - upper_floor_z) > 2:
+            continue
+
+        # Check if already connected
+        is_connected = False
+        for conn in layout.connections:
+            if (conn.primitive_a_id == prim.id and conn.portal_a_id == 'upper') or \
+               (conn.primitive_b_id == prim.id and conn.portal_b_id == 'upper'):
+                is_connected = True
+                break
+
+        if is_connected:
+            continue
+
+        # Get world position and direction
+        world_cell = upper_portal.world_cell(
+            prim.origin_cell, prim.rotation,
+            footprint.width_cells, footprint.depth_cells
+        )
+        world_dir = upper_portal.rotated_direction(prim.rotation)
+
+        upper_portals.append((prim.id, 'upper', world_cell, world_dir))
+        _debug(f"[UPPER_PORTALS] Found upper portal from {prim.primitive_type} at cell ({world_cell.x}, {world_cell.y})")
+
+    return upper_portals
 
 
 def _connection_exists(connections: List[Connection], conn: Connection) -> bool:
@@ -82,6 +182,57 @@ def _connection_exists(connections: List[Connection], conn: Connection) -> bool:
     return False
 
 
+def _get_portal_world_z(
+    prim: PlacedPrimitive,
+    portal_id: str,
+) -> float:
+    """
+    Get the absolute world Z position for a portal on a primitive.
+
+    This correctly handles multi-floor rooms where portals have different z_levels.
+    For example, a BalconyRoom at z_offset=-160 has:
+    - entrance portal at z_level=0 -> world Z = -160
+    - upper portal at z_level=160 -> world Z = 0
+
+    Args:
+        prim: The placed primitive
+        portal_id: ID of the portal to query
+
+    Returns:
+        The absolute world Z coordinate where the portal floor sits
+    """
+    return prim.get_absolute_portal_z(portal_id)
+
+
+def _portals_z_match(
+    prim_a: PlacedPrimitive,
+    portal_a_id: str,
+    prim_b: PlacedPrimitive,
+    portal_b_id: str,
+    tolerance: float = 2.0,
+) -> bool:
+    """
+    Check if two portals are at matching world Z levels.
+
+    This is the correct way to validate portal connectivity - comparing
+    the actual world Z positions of the portal floors, not just the
+    primitive z_offsets.
+
+    Args:
+        prim_a: First primitive
+        portal_a_id: Portal ID on first primitive
+        prim_b: Second primitive
+        portal_b_id: Portal ID on second primitive
+        tolerance: Maximum allowed Z difference (default 2 units per CLAUDE.md)
+
+    Returns:
+        True if the portals are at matching Z levels (within tolerance)
+    """
+    z_a = _get_portal_world_z(prim_a, portal_a_id)
+    z_b = _get_portal_world_z(prim_b, portal_b_id)
+    return abs(z_a - z_b) <= tolerance
+
+
 def generate_random_layout(
     room_count: int = 5,
     map_width: int = 20,
@@ -96,6 +247,7 @@ def generate_random_layout(
     secret_room_frequency: int = 0,
     exclude_tall: bool = False,
     require_stair_space: bool = False,
+    exclude_multi_floor: bool = False,
 ) -> Tuple[DungeonLayout, int]:
     """
     Generate a random dungeon layout with connected halls and rooms.
@@ -114,6 +266,7 @@ def generate_random_layout(
         secret_room_frequency: Percentage of rooms that should be SecretChambers (0-100)
         exclude_tall: If True, exclude tall rooms (Tower, Sanctuary, etc.) for multi-floor layouts
         require_stair_space: If True, stop generation early if no stair-friendly portals remain
+        exclude_multi_floor: If True, exclude multi-floor rooms (for non-top floors)
 
     Returns:
         Tuple of (DungeonLayout, actual_seed_used)
@@ -193,6 +346,7 @@ def generate_random_layout(
                 complexity, preferred_room_types,
                 placed_rooms, placed_secret_rooms, target_secret_rooms,
                 exclude_tall=exclude_tall,
+                exclude_multi_floor=exclude_multi_floor,
             )
             _debug(f"[RANDOM_LAYOUT] Trying to place ROOM: {prim_type}")
         else:
@@ -303,6 +457,7 @@ def _select_room_type(
     placed_secret_rooms: int = 0,
     target_secret_rooms: int = 0,
     exclude_tall: bool = False,
+    exclude_multi_floor: bool = False,
 ) -> str:
     """Select a room type based on complexity, preferences, and secret room targets.
 
@@ -313,6 +468,7 @@ def _select_room_type(
         placed_secret_rooms: Number of secret rooms already placed
         target_secret_rooms: Target number of secret rooms to place
         exclude_tall: If True, exclude tall rooms (for multi-floor layouts)
+        exclude_multi_floor: If True, exclude multi-floor rooms (for non-top floors)
 
     Returns:
         Selected room type name
@@ -333,6 +489,8 @@ def _select_room_type(
         valid_preferred = [r for r in preferred if r in ROOM_TYPES]
         if exclude_tall:
             valid_preferred = [r for r in valid_preferred if r not in TALL_ROOMS]
+        if exclude_multi_floor:
+            valid_preferred = [r for r in valid_preferred if r not in MULTI_FLOOR_ROOM_TYPES]
         if valid_preferred:
             return random.choice(valid_preferred)
 
@@ -350,6 +508,10 @@ def _select_room_type(
     # Exclude tall rooms for multi-floor layouts
     if exclude_tall:
         choices = [r for r in choices if r not in TALL_ROOMS]
+
+    # Exclude multi-floor rooms from non-top floors to prevent spatial collisions
+    if exclude_multi_floor:
+        choices = [r for r in choices if r not in MULTI_FLOOR_ROOM_TYPES]
 
     return random.choice(choices)
 
@@ -476,9 +638,24 @@ def _collect_open_portals(
     prim: PlacedPrimitive,
     open_portals: List[Tuple[str, str, CellCoord, PortalDirection]],
     layout: DungeonLayout,
-    exclude_portal: Optional[str] = None
+    exclude_portal: Optional[str] = None,
+    floor_z_level: int = 0
 ):
-    """Collect all open (unconnected) portals from a primitive."""
+    """Collect open (unconnected) portals from a primitive at the specified floor Z level.
+
+    IMPORTANT: This function now filters portals by their z_level attribute.
+    Multi-floor rooms have portals at different z_levels (entrance=0, upper=160).
+    Only portals matching floor_z_level (relative to primitive's z_offset) are collected.
+
+    Args:
+        prim: The primitive to collect portals from
+        open_portals: List to append results to
+        layout: Layout containing connections to check
+        exclude_portal: Optional portal ID to skip (usually the connecting portal)
+        floor_z_level: Expected portal z_level relative to primitive (default 0 for
+                       standard floor-level portals). Set to 160 to collect upper
+                       portals from multi-floor rooms.
+    """
     footprint = PRIMITIVE_FOOTPRINTS.get(prim.primitive_type)
     if footprint is None:
         return
@@ -491,11 +668,19 @@ def _collect_open_portals(
         if conn.primitive_b_id == prim.id:
             connected_portals.add(conn.portal_b_id)
 
-    # Add unconnected portals
+    # Add unconnected portals that match the expected z_level
     for portal in footprint.portals:
         if portal.id == exclude_portal:
             continue
         if portal.id in connected_portals:
+            continue
+
+        # CRITICAL FIX: Filter by portal z_level to prevent Z-mismatch connections
+        # Multi-floor rooms have 'entrance' at z_level=0 and 'upper' at z_level=160.
+        # Only collect portals that match the current floor's expected z_level.
+        if portal.z_level != floor_z_level:
+            _debug(f"[COLLECT_PORTALS] Skipping {prim.primitive_type}.{portal.id} "
+                   f"(z_level={portal.z_level} != expected {floor_z_level})")
             continue
 
         # Get world position and direction of this portal
@@ -514,10 +699,16 @@ def _find_placement(
     connect_dir: PortalDirection,
     occupied: Set[Tuple[int, int]],
     map_width: int,
-    map_height: int
+    map_height: int,
+    floor_z_level: int = 0
 ) -> Optional[Tuple[CellCoord, int, str]]:
     """
     Find a valid placement for a primitive that connects to the given portal.
+
+    IMPORTANT: This function now filters portals by their z_level attribute to
+    prevent Z-mismatched connections. Multi-floor rooms have portals at different
+    z_levels (entrance=0, upper=160), and only floor-level portals should be used
+    during standard floor generation.
 
     Args:
         prim_type: Type of primitive to place
@@ -526,6 +717,7 @@ def _find_placement(
         occupied: Set of occupied cells
         map_width: Grid width limit
         map_height: Grid height limit
+        floor_z_level: Expected portal z_level for this floor (default 0)
 
     Returns:
         Tuple of (origin, rotation, portal_id) or None if no valid placement
@@ -542,6 +734,12 @@ def _find_placement(
     # Try each rotation to find one where a portal faces required_dir
     for rotation in [0, 90, 180, 270]:
         for portal in footprint.portals:
+            # CRITICAL FIX: Filter by portal z_level to prevent Z-mismatch connections
+            # Multi-floor rooms have 'entrance' at z_level=0 and 'upper' at z_level=160.
+            # Only use portals that match the expected floor z_level.
+            if portal.z_level != floor_z_level:
+                continue
+
             rotated_dir = portal.rotated_direction(rotation)
             if rotated_dir != required_dir:
                 continue
@@ -1138,11 +1336,16 @@ def _find_adjacent_network_portal(
     Looks for a primitive in the main floor network that has an unconnected portal
     facing toward the given primitive's open portal.
 
+    IMPORTANT: This function validates portal world Z, not just primitive z_offset.
+    Multi-floor rooms have portals at different z_levels, so we must compare:
+        source_portal_world_z = prim.z_offset + source_portal.z_level
+        other_portal_world_z = other_prim.z_offset + other_portal.z_level
+
     Args:
         layout: The combined dungeon layout
         primitive_id: ID of the primitive with the open portal
         open_portal_id: ID of the open portal on that primitive
-        z_level: Z-level to search on
+        z_level: Target world Z level for the connection (not primitive z_offset!)
 
     Returns:
         Tuple of (adjacent_prim_id, adjacent_portal_id) or None if not found
@@ -1169,16 +1372,15 @@ def _find_adjacent_network_portal(
     portal_cell = prim.get_portal_world_cell(open_portal)
     portal_dir = open_portal.rotated_direction(prim.rotation)
 
+    # Calculate the source portal's world Z
+    source_portal_world_z = _get_portal_world_z(prim, open_portal_id)
+
     # Find cell adjacent to this portal (where a connection would come from)
     adjacent_cell = portal_cell.neighbor(portal_dir)
 
-    # Check if any primitive on this z-level has an open portal at that cell
+    # Check if any primitive has an open portal at that cell with matching Z
     for other_id, other_prim in layout.primitives.items():
         if other_id == primitive_id:
-            continue
-
-        # Must be same z-level (within tolerance)
-        if abs(other_prim.z_offset - z_level) > 2:
             continue
 
         other_footprint = PRIMITIVE_FOOTPRINTS.get(other_prim.primitive_type)
@@ -1191,9 +1393,18 @@ def _find_adjacent_network_portal(
 
             # Check: adjacent cell matches AND directions face each other
             if other_cell == adjacent_cell and other_dir == portal_dir.opposite():
+                # CRITICAL FIX: Validate portal world Z, not primitive z_offset
+                # Multi-floor rooms have portals at different z_levels!
+                other_portal_world_z = _get_portal_world_z(other_prim, other_portal.id)
+
+                if abs(source_portal_world_z - other_portal_world_z) > 2:
+                    _debug(f"[FIND_ADJ_PORTAL] Skipping {other_id[:8]}:{other_portal.id} - Z mismatch: "
+                           f"source={source_portal_world_z}, other={other_portal_world_z}")
+                    continue
+
                 # Verify this portal isn't already connected
                 if not _is_portal_connected(layout, other_id, other_portal.id):
-                    _debug(f"[FIND_ADJ_PORTAL] Found: {other_id[:8]}:{other_portal.id} at cell ({adjacent_cell.x}, {adjacent_cell.y})")
+                    _debug(f"[FIND_ADJ_PORTAL] Found: {other_id[:8]}:{other_portal.id} at cell ({adjacent_cell.x}, {adjacent_cell.y}) Z={other_portal_world_z}")
                     return (other_id, other_portal.id)
 
     return None
@@ -1305,6 +1516,9 @@ def generate_multi_floor_layout(
 
             # Require stair space on all floors except the top floor
             needs_stair_space = floor_idx < floor_count - 1
+            # Exclude multi-floor rooms from all floors except the topmost
+            # to prevent spatial collisions with adjacent floors
+            is_top_floor = floor_idx == floor_count - 1
             floor_layout, _ = generate_random_layout(
                 room_count=rooms_per_floor,
                 map_width=map_width,
@@ -1319,6 +1533,7 @@ def generate_multi_floor_layout(
                 secret_room_frequency=secret_room_frequency,
                 exclude_tall=True,  # Multi-floor: exclude tall rooms to prevent collisions
                 require_stair_space=needs_stair_space,
+                exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
             )
 
             # Track occupied cells
@@ -1350,54 +1565,32 @@ def generate_multi_floor_layout(
             _debug(f"[MULTI_FLOOR] Floor {floor_name}: {len(floor_layout.primitives)} primitives")
 
         else:
-            # Subsequent floors: place stair FIRST, then generate floor from stair top
+            # Subsequent floors: connect via upper portal from multi-floor room OR VerticalStairHall
             prev_idx = floor_idx - 1
             prev_z = floor_z_offsets[prev_idx]
 
-            if auto_connect_floors and vstair_footprint:
-                _debug(f"[MULTI_FLOOR] Placing stair to connect floor {prev_idx} -> {floor_idx}")
+            if auto_connect_floors:
+                _debug(f"[MULTI_FLOOR] Connecting floor {prev_idx} -> {floor_idx}")
 
-                # Find stair placement from previous floor
-                stair_result = _place_stair_and_get_top_portal(
-                    combined_layout,
-                    floor_layouts[prev_idx],
-                    floor_occupied[prev_idx],
-                    floor_occupied[floor_idx],
-                    prev_z,
-                    z_offset,
-                    map_width,
-                    map_height,
+                # STRATEGY 1: Check if any multi-floor room on the lower floor has an open upper portal
+                upper_portals = _collect_upper_portals_from_lower_floor(
+                    combined_layout, prev_z, z_offset
                 )
 
-                if stair_result:
-                    stair_prim, top_portal_cell, top_portal_dir = stair_result
-                    _debug(f"[MULTI_FLOOR] Stair placed, top portal at ({top_portal_cell.x}, {top_portal_cell.y}) facing {top_portal_dir.name}")
+                if upper_portals:
+                    # Use a multi-floor room's upper portal as the connection point
+                    # Pick randomly from available upper portals
+                    upper_prim_id, upper_portal_id, upper_cell, upper_dir = random.choice(upper_portals)
+                    _debug(f"[MULTI_FLOOR] Using multi-floor room upper portal from {upper_prim_id[:8]}... at ({upper_cell.x}, {upper_cell.y})")
 
-                    # If this isn't the last floor, reserve space for the NEXT stair
-                    # BEFORE generating this floor, to prevent floor generation from
-                    # blocking the stair location
-                    reserved_next_stair_cells: Set[Tuple[int, int]] = set()
+                    # Generate this floor starting from the upper portal
                     needs_stair_space = floor_idx < floor_count - 1
-                    if needs_stair_space:
-                        # Find a suitable stair location opposite to current stair
-                        # to encourage good layout connectivity
-                        reserve_origin = _find_stair_reservation_location(
-                            top_portal_cell, top_portal_dir,
-                            floor_occupied[floor_idx],
-                            map_width, map_height
-                        )
-                        if reserve_origin:
-                            reserved_next_stair_cells = _get_stair_reserved_cells(
-                                reserve_origin[0], reserve_origin[1]
-                            )
-                            floor_occupied[floor_idx].update(reserved_next_stair_cells)
-                            _debug(f"[MULTI_FLOOR] Reserved {len(reserved_next_stair_cells)} cells for next stair at ({reserve_origin[0].x}, {reserve_origin[0].y})")
-
-                    # Generate this floor starting from stair's top portal
+                    # Exclude multi-floor rooms from non-top floors
+                    is_top_floor = floor_idx == floor_count - 1
                     floor_layout = _generate_floor_from_portal(
-                        top_portal_cell,
-                        top_portal_dir,
-                        stair_prim.id,
+                        upper_cell,
+                        upper_dir,
+                        upper_prim_id,  # Connect to the multi-floor room
                         z_offset,
                         rooms_per_floor,
                         map_width,
@@ -1413,136 +1606,226 @@ def generate_multi_floor_layout(
                         floor_occupied[floor_idx],
                         combined_layout=combined_layout,
                         require_stair_space=needs_stair_space,
+                        start_portal_id=upper_portal_id,  # Specify the portal to connect
+                        exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
                     )
 
-                    # VERIFY: Check that both stair portals are connected
-                    bottom_conn, top_conn = _verify_stair_connectivity(combined_layout, stair_prim)
-                    _debug(f"[MULTI_FLOOR] Stair connectivity: bottom={bottom_conn}, top={top_conn}")
+                    # Update occupied cells for this floor
+                    for prim in floor_layout.primitives.values():
+                        if prim.id not in combined_layout.primitives:
+                            cells = _get_primitive_cells(prim.primitive_type, prim.origin_cell, prim.rotation)
+                            floor_occupied[floor_idx].update(cells)
 
-                    if not top_conn:
-                        _debug(f"[MULTI_FLOOR] WARNING: Stair top portal not connected, attempting recovery")
-                        param_rng = random.Random(seed + floor_idx + 1000)
-                        recovery_success = _attempt_stair_top_recovery(
-                            combined_layout,
-                            floor_layout,
-                            stair_prim,
-                            floor_occupied[floor_idx],
+                    # Merge floor layout into combined (skip duplicates)
+                    for prim in floor_layout.primitives.values():
+                        if prim.id not in combined_layout.primitives:
+                            combined_layout.primitives[prim.id] = prim
+                    for conn in floor_layout.connections:
+                        if not _connection_exists(combined_layout.connections, conn):
+                            combined_layout.connections.append(conn)
+
+                    floor_layouts[floor_idx] = floor_layout
+                    stairs_placed_count += 1  # Count multi-floor room as a "stair"
+                    _debug(f"[MULTI_FLOOR] Floor {floor_names[floor_idx]}: {len(floor_layout.primitives)} primitives (via multi-floor room)")
+
+                # STRATEGY 2: Use VerticalStairHall (original approach)
+                elif vstair_footprint:
+                    _debug(f"[MULTI_FLOOR] No multi-floor rooms available, using VerticalStairHall")
+
+                    # Find stair placement from previous floor
+                    stair_result = _place_stair_and_get_top_portal(
+                    combined_layout,
+                    floor_layouts[prev_idx],
+                    floor_occupied[prev_idx],
+                    floor_occupied[floor_idx],
+                    prev_z,
+                    z_offset,
+                    map_width,
+                    map_height,
+                )
+
+                    if stair_result:
+                        stair_prim, top_portal_cell, top_portal_dir = stair_result
+                        _debug(f"[MULTI_FLOOR] Stair placed, top portal at ({top_portal_cell.x}, {top_portal_cell.y}) facing {top_portal_dir.name}")
+
+                        # If this isn't the last floor, reserve space for the NEXT stair
+                        # BEFORE generating this floor, to prevent floor generation from
+                        # blocking the stair location
+                        reserved_next_stair_cells: Set[Tuple[int, int]] = set()
+                        needs_stair_space = floor_idx < floor_count - 1
+                        if needs_stair_space:
+                            # Find a suitable stair location opposite to current stair
+                            # to encourage good layout connectivity
+                            reserve_origin = _find_stair_reservation_location(
+                                top_portal_cell, top_portal_dir,
+                                floor_occupied[floor_idx],
+                                map_width, map_height
+                            )
+                            if reserve_origin:
+                                reserved_next_stair_cells = _get_stair_reserved_cells(
+                                    reserve_origin[0], reserve_origin[1]
+                                )
+                                floor_occupied[floor_idx].update(reserved_next_stair_cells)
+                                _debug(f"[MULTI_FLOOR] Reserved {len(reserved_next_stair_cells)} cells for next stair at ({reserve_origin[0].x}, {reserve_origin[0].y})")
+
+                        # Generate this floor starting from stair's top portal
+                        # Exclude multi-floor rooms from non-top floors
+                        is_top_floor = floor_idx == floor_count - 1
+                        floor_layout = _generate_floor_from_portal(
+                            top_portal_cell,
+                            top_portal_dir,
+                            stair_prim.id,
+                            z_offset,
+                            rooms_per_floor,
                             map_width,
                             map_height,
-                            z_offset,
-                            param_rng,
+                            floor_seed,
+                            complexity,
+                            preferred_room_types,
+                            preferred_hall_types,
+                            room_probability,
+                            min_hall_between_rooms,
+                            allow_dead_ends,
+                            secret_room_frequency,
+                            floor_occupied[floor_idx],
+                            combined_layout=combined_layout,
+                            require_stair_space=needs_stair_space,
+                            exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
                         )
 
-                        if not recovery_success:
-                            _debug(f"[MULTI_FLOOR] Recovery failed, rolling back stair and trying extension approach")
-                            _rollback_stair_placement(
+                        # VERIFY: Check that both stair portals are connected
+                        bottom_conn, top_conn = _verify_stair_connectivity(combined_layout, stair_prim)
+                        _debug(f"[MULTI_FLOOR] Stair connectivity: bottom={bottom_conn}, top={top_conn}")
+
+                        if not top_conn:
+                            _debug(f"[MULTI_FLOOR] WARNING: Stair top portal not connected, attempting recovery")
+                            param_rng = random.Random(seed + floor_idx + 1000)
+                            recovery_success = _attempt_stair_top_recovery(
                                 combined_layout,
+                                floor_layout,
                                 stair_prim,
-                                floor_occupied[prev_idx],
                                 floor_occupied[floor_idx],
+                                map_width,
+                                map_height,
+                                z_offset,
+                                param_rng,
                             )
-                            stair_result = None  # Fall through to extension approach
+
+                            if not recovery_success:
+                                _debug(f"[MULTI_FLOOR] Recovery failed, rolling back stair and trying extension approach")
+                                _rollback_stair_placement(
+                                    combined_layout,
+                                    stair_prim,
+                                    floor_occupied[prev_idx],
+                                    floor_occupied[floor_idx],
+                                )
+                                stair_result = None  # Fall through to extension approach
+                            else:
+                                stairs_placed_count += 1
                         else:
                             stairs_placed_count += 1
-                    else:
-                        stairs_placed_count += 1
 
-                    # Release reserved stair cells before checking for stair-friendly portal
-                    # The reserved cells may have been blocked by floor generation anyway,
-                    # or _ensure_stair_friendly_portal may find a better location
-                    if reserved_next_stair_cells:
-                        for cell in reserved_next_stair_cells:
-                            floor_occupied[floor_idx].discard(cell)
-                        _debug(f"[MULTI_FLOOR] Released {len(reserved_next_stair_cells)} reserved stair cells")
+                        # Release reserved stair cells before checking for stair-friendly portal
+                        # The reserved cells may have been blocked by floor generation anyway,
+                        # or _ensure_stair_friendly_portal may find a better location
+                        if reserved_next_stair_cells:
+                            for cell in reserved_next_stair_cells:
+                                floor_occupied[floor_idx].discard(cell)
+                            _debug(f"[MULTI_FLOOR] Released {len(reserved_next_stair_cells)} reserved stair cells")
 
-                    # If stair was placed successfully and this isn't the last floor,
-                    # ensure there's a stair-friendly portal for the NEXT stair
-                    if stair_result is not None and floor_idx < floor_count - 1:
-                        _debug(f"[MULTI_FLOOR] Ensuring stair-friendly portal for next floor (floor_idx={floor_idx}, floor_count={floor_count})")
-                        param_rng = random.Random(seed + floor_idx + 500)
-                        ensured = _ensure_stair_friendly_portal(
-                            floor_layout, combined_layout, floor_occupied[floor_idx],
-                            map_width, map_height, z_offset, param_rng
-                        )
-                        _debug(f"[MULTI_FLOOR] Ensure stair-friendly result: {ensured}")
-
-                if stair_result is None:
-                    _debug(f"[MULTI_FLOOR] Stair-first approach failed, trying extension-based approach")
-
-                    # PHASE 4 FIX: Find viable stair positions BEFORE generating upper floor
-                    # Reserve cells for the best stair candidate to prevent blocking
-                    potential_stair_positions = _find_all_viable_stair_positions(
-                        floor_layouts[prev_idx],
-                        combined_layout,
-                        floor_occupied[prev_idx],
-                        floor_occupied[floor_idx],  # Currently empty for new floor
-                        map_width,
-                        map_height,
-                    )
-
-                    reserved_cells: Set[Tuple[int, int]] = set()
-                    if potential_stair_positions:
-                        # Reserve cells for best stair position
-                        best_origin, best_rotation, _, _ = potential_stair_positions[0]
-                        reserved_cells = _get_stair_reserved_cells(best_origin, best_rotation)
-                        floor_occupied[floor_idx].update(reserved_cells)
-                        _debug(f"[MULTI_FLOOR] Reserved {len(reserved_cells)} cells for stair at ({best_origin.x}, {best_origin.y})")
-
-                    # Generate this floor with reserved cells blocked
-                    # Require stair space on all floors except the top floor
-                    needs_stair_space = floor_idx < floor_count - 1
-                    floor_layout, _ = generate_random_layout(
-                        room_count=rooms_per_floor,
-                        map_width=map_width,
-                        map_height=map_height,
-                        seed=floor_seed,
-                        complexity=complexity,
-                        preferred_room_types=preferred_room_types,
-                        preferred_hall_types=preferred_hall_types,
-                        room_probability=room_probability,
-                        min_hall_between_rooms=min_hall_between_rooms,
-                        allow_dead_ends=allow_dead_ends,
-                        secret_room_frequency=secret_room_frequency,
-                        exclude_tall=True,  # Multi-floor: exclude tall rooms
-                        require_stair_space=needs_stair_space,
-                    )
-
-                    for prim in floor_layout.primitives.values():
-                        cells = _get_primitive_cells(prim.primitive_type, prim.origin_cell, prim.rotation)
-                        floor_occupied[floor_idx].update(cells)
-
-                    # Release reserved cells before stair placement (they'll be re-claimed by stair)
-                    for cell in reserved_cells:
-                        floor_occupied[floor_idx].discard(cell)
-
-                    # Now try extension-based stair placement between the two floors
-                    if _place_vertical_stair_with_extension(
-                        combined_layout,
-                        floor_layouts[prev_idx],
-                        floor_layout,
-                        floor_occupied[prev_idx],
-                        floor_occupied[floor_idx],
-                        prev_z,
-                        z_offset,
-                        map_width,
-                        map_height,
-                    ):
-                        stairs_placed_count += 1
-                        _debug(f"[MULTI_FLOOR] Extension-based stair placed successfully")
-
-                        # Ensure stair-friendly portal for next floor if not last floor
-                        if floor_idx < floor_count - 1:
-                            param_rng = random.Random(seed + floor_idx + 600)
-                            _ensure_stair_friendly_portal(
+                        # If stair was placed successfully and this isn't the last floor,
+                        # ensure there's a stair-friendly portal for the NEXT stair
+                        if stair_result is not None and floor_idx < floor_count - 1:
+                            _debug(f"[MULTI_FLOOR] Ensuring stair-friendly portal for next floor (floor_idx={floor_idx}, floor_count={floor_count})")
+                            param_rng = random.Random(seed + floor_idx + 500)
+                            ensured = _ensure_stair_friendly_portal(
                                 floor_layout, combined_layout, floor_occupied[floor_idx],
                                 map_width, map_height, z_offset, param_rng
                             )
-                    else:
-                        _debug(f"[MULTI_FLOOR] WARNING: Could not connect floors - layout will be isolated")
+                            _debug(f"[MULTI_FLOOR] Ensure stair-friendly result: {ensured}")
+
+                    if stair_result is None:
+                        _debug(f"[MULTI_FLOOR] Stair-first approach failed, trying extension-based approach")
+
+                        # PHASE 4 FIX: Find viable stair positions BEFORE generating upper floor
+                        # Reserve cells for the best stair candidate to prevent blocking
+                        potential_stair_positions = _find_all_viable_stair_positions(
+                            floor_layouts[prev_idx],
+                            combined_layout,
+                            floor_occupied[prev_idx],
+                            floor_occupied[floor_idx],  # Currently empty for new floor
+                            map_width,
+                            map_height,
+                        )
+
+                        reserved_cells: Set[Tuple[int, int]] = set()
+                        if potential_stair_positions:
+                            # Reserve cells for best stair position
+                            best_origin, best_rotation, _, _ = potential_stair_positions[0]
+                            reserved_cells = _get_stair_reserved_cells(best_origin, best_rotation)
+                            floor_occupied[floor_idx].update(reserved_cells)
+                            _debug(f"[MULTI_FLOOR] Reserved {len(reserved_cells)} cells for stair at ({best_origin.x}, {best_origin.y})")
+
+                        # Generate this floor with reserved cells blocked
+                        # Require stair space on all floors except the top floor
+                        needs_stair_space = floor_idx < floor_count - 1
+                        # Exclude multi-floor rooms from non-top floors
+                        is_top_floor = floor_idx == floor_count - 1
+                        floor_layout, _ = generate_random_layout(
+                            room_count=rooms_per_floor,
+                            map_width=map_width,
+                            map_height=map_height,
+                            seed=floor_seed,
+                            complexity=complexity,
+                            preferred_room_types=preferred_room_types,
+                            preferred_hall_types=preferred_hall_types,
+                            room_probability=room_probability,
+                            min_hall_between_rooms=min_hall_between_rooms,
+                            allow_dead_ends=allow_dead_ends,
+                            secret_room_frequency=secret_room_frequency,
+                            exclude_tall=True,  # Multi-floor: exclude tall rooms
+                            require_stair_space=needs_stair_space,
+                            exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                        )
+
+                        for prim in floor_layout.primitives.values():
+                            cells = _get_primitive_cells(prim.primitive_type, prim.origin_cell, prim.rotation)
+                            floor_occupied[floor_idx].update(cells)
+
+                        # Release reserved cells before stair placement (they'll be re-claimed by stair)
+                        for cell in reserved_cells:
+                            floor_occupied[floor_idx].discard(cell)
+
+                        # Now try extension-based stair placement between the two floors
+                        if _place_vertical_stair_with_extension(
+                            combined_layout,
+                            floor_layouts[prev_idx],
+                            floor_layout,
+                            floor_occupied[prev_idx],
+                            floor_occupied[floor_idx],
+                            prev_z,
+                            z_offset,
+                            map_width,
+                            map_height,
+                        ):
+                            stairs_placed_count += 1
+                            _debug(f"[MULTI_FLOOR] Extension-based stair placed successfully")
+
+                            # Ensure stair-friendly portal for next floor if not last floor
+                            if floor_idx < floor_count - 1:
+                                param_rng = random.Random(seed + floor_idx + 600)
+                                _ensure_stair_friendly_portal(
+                                    floor_layout, combined_layout, floor_occupied[floor_idx],
+                                    map_width, map_height, z_offset, param_rng
+                                )
+                        else:
+                            _debug(f"[MULTI_FLOOR] WARNING: Could not connect floors - layout will be isolated")
             else:
                 # No auto-connect: generate floor normally
                 # Still require stair space in case user manually adds stairs later
                 needs_stair_space = floor_idx < floor_count - 1
+                # Exclude multi-floor rooms from non-top floors
+                is_top_floor = floor_idx == floor_count - 1
                 floor_layout, _ = generate_random_layout(
                     room_count=rooms_per_floor,
                     map_width=map_width,
@@ -1557,6 +1840,7 @@ def generate_multi_floor_layout(
                     secret_room_frequency=secret_room_frequency,
                     exclude_tall=True,  # Multi-floor: exclude tall rooms
                     require_stair_space=needs_stair_space,
+                    exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
                 )
 
                 for prim in floor_layout.primitives.values():
@@ -2266,14 +2550,19 @@ def _find_hall_placement_for_stair(
                         other_dir = other_portal.rotated_direction(rotation)
                         adjacent_cell = other_cell.neighbor(other_dir)
 
-                        # Check if any upper floor primitive has a portal at adjacent cell
+                        # Check if any primitive has a portal at adjacent cell WITH MATCHING Z
+                        # CRITICAL FIX: Must check portal world Z, not primitive z_offset!
+                        # Multi-floor rooms on lower floor have upper portals at upper_z.
                         for prim_id, prim in upper_floor_layout.primitives.items():
-                            if abs(prim.z_offset - upper_z) > 2:
-                                continue
                             prim_footprint = PRIMITIVE_FOOTPRINTS.get(prim.primitive_type)
                             if not prim_footprint:
                                 continue
                             for prim_portal in prim_footprint.portals:
+                                # Calculate portal's actual world Z
+                                portal_world_z = _get_portal_world_z(prim, prim_portal.id)
+                                if abs(portal_world_z - upper_z) > 2:
+                                    continue  # Portal not at upper_z level
+
                                 prim_portal_cell = prim.get_portal_world_cell(prim_portal)
                                 prim_portal_dir = prim_portal.rotated_direction(prim.rotation)
                                 if (prim_portal_cell == adjacent_cell and
@@ -2555,20 +2844,23 @@ def _generate_floor_from_portal(
     occupied: Set[Tuple[int, int]],
     combined_layout: Optional[DungeonLayout] = None,
     require_stair_space: bool = False,
+    start_portal_id: str = 'top',  # Portal ID to connect to (default 'top' for VerticalStairHall)
+    exclude_multi_floor: bool = False,  # Exclude multi-floor rooms (for non-top floors)
 ) -> DungeonLayout:
     """
-    Generate a floor layout starting from a specific portal (stair top).
+    Generate a floor layout starting from a specific portal.
 
     Instead of starting from a random center position, this generates the floor
-    emanating from the stair's top portal, ensuring connectivity.
+    emanating from a portal (stair top or multi-floor room upper portal).
 
     Args:
         start_portal_cell: Cell where the starting portal is located
         start_portal_dir: Direction the starting portal faces
-        start_prim_id: ID of the primitive with the starting portal (the stair)
+        start_prim_id: ID of the primitive with the starting portal
         z_offset: Z-level for this floor
         ... (other generation parameters)
-        occupied: Set of already-occupied cells (stair footprint)
+        occupied: Set of already-occupied cells
+        start_portal_id: ID of the portal to connect to ('top' for stair, 'upper' for multi-floor room)
 
     Returns:
         DungeonLayout with connected primitives
@@ -2627,10 +2919,46 @@ def _generate_floor_from_portal(
 
     _debug(f"[GEN_FROM_PORTAL] Placed starting {start_type} at ({new_origin.x}, {new_origin.y})")
 
-    # Create connection from stair top to this primitive
+    # === Z-LEVEL VALIDATION ===
+    # Verify that source portal z_level + source z_offset matches
+    # new portal z_level + new z_offset (within ±2 units tolerance)
+    z_mismatch = False
+    if combined_layout is not None and start_prim_id in combined_layout.primitives:
+        source_prim = combined_layout.primitives[start_prim_id]
+        source_fp = PRIMITIVE_FOOTPRINTS.get(source_prim.primitive_type)
+        new_fp = PRIMITIVE_FOOTPRINTS.get(start_type)
+
+        if source_fp and new_fp:
+            # Find source portal z_level
+            source_portal_z = 0
+            for portal in source_fp.portals:
+                if portal.id == start_portal_id:
+                    source_portal_z = portal.z_level
+                    break
+
+            # Find new portal z_level
+            new_portal_z = 0
+            for portal in new_fp.portals:
+                if portal.id == connecting_portal_id:
+                    new_portal_z = portal.z_level
+                    break
+
+            # Calculate world Z for each portal
+            source_world_z = source_prim.z_offset + source_portal_z
+            new_world_z = z_offset + new_portal_z
+
+            if abs(source_world_z - new_world_z) > 2:
+                _debug(f"[GEN_FROM_PORTAL] WARNING: Z mismatch detected!")
+                _debug(f"  Source: {source_prim.primitive_type}.{start_portal_id} at world Z={source_world_z}")
+                _debug(f"    (z_offset={source_prim.z_offset} + portal_z_level={source_portal_z})")
+                _debug(f"  New: {start_type}.{connecting_portal_id} at world Z={new_world_z}")
+                _debug(f"    (z_offset={z_offset} + portal_z_level={new_portal_z})")
+                z_mismatch = True
+
+    # Create connection from start portal (stair top or multi-floor room upper) to this primitive
     stair_connection = Connection(
         primitive_a_id=start_prim_id,
-        portal_a_id='top',
+        portal_a_id=start_portal_id,
         primitive_b_id=start_prim.id,
         portal_b_id=connecting_portal_id
     )
@@ -2700,11 +3028,12 @@ def _generate_floor_from_portal(
             effective_room_prob = min(0.8, room_probability + 0.2)
 
         if placed_rooms < room_count and random.random() < effective_room_prob:
-            # Exclude tall rooms in multi-floor layouts to prevent cross-floor collisions
+            # Exclude tall rooms and multi-floor rooms in multi-floor layouts to prevent collisions
             prim_type = _select_room_type(
                 complexity, preferred_room_types,
                 placed_rooms, placed_secret_rooms, target_secret_rooms,
                 exclude_tall=True,
+                exclude_multi_floor=exclude_multi_floor,
             )
         else:
             # For small floors, prefer junctions to create more open portals

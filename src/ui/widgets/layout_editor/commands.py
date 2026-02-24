@@ -198,16 +198,6 @@ class MovePrimitiveCommand(Command):
         # Check if new position is valid (excluding self)
         new_origin = CellCoord(self.new_origin_x, self.new_origin_y)
 
-        if footprint:
-            # Temporarily remove primitive to check placement
-            new_cells = set(footprint.occupied_cells(new_origin, prim.rotation))
-            for other_id, other_prim in layout.primitives.items():
-                if other_id == self.primitive_id:
-                    continue
-                other_cells = set(other_prim.occupied_cells())
-                if new_cells & other_cells:
-                    return False  # Collision
-
         # Save old connections
         self._old_connections = [
             copy.deepcopy(c) for c in layout.connections

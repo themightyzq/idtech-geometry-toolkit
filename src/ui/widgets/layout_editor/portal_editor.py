@@ -92,11 +92,17 @@ class PortalEditorWidget(QWidget):
             widget.deleteLater()
         self._portal_widgets.clear()
 
-        if self._primitive is None or self._primitive.footprint is None:
+        if self._primitive is None:
+            return
+
+        # Use get_portals() which has fallback to PRIMITIVE_FOOTPRINTS
+        # This ensures portals are available even after JSON load
+        portals = self._primitive.get_portals()
+        if not portals:
             return
 
         # Create a row for each portal
-        for portal in self._primitive.footprint.portals:
+        for portal in portals:
             row = _PortalRow(portal, self._primitive, self)
             row.override_changed.connect(self._on_portal_changed)
 

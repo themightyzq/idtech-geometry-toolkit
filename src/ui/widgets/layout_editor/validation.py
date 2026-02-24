@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from collections import deque
 
-from .data_model import DungeonLayout, PlacedPrimitive, Portal, CellCoord
+from .data_model import DungeonLayout, PlacedPrimitive, Portal, CellCoord, PortalDirection
 from .traversability import (
     validate_multi_floor_path,
     TraversabilityResult,
@@ -29,6 +29,12 @@ from .spatial_validation import (
 
 # Debug flag for terminal output
 VALIDATION_DEBUG = True
+
+# Multi-floor room types - these have internal stairs connecting entrance (z=0) to upper (z=160)
+MULTI_FLOOR_ROOM_TYPES = {
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+}
 
 def _debug_print(message: str) -> None:
     """Print validation debug info to terminal."""
@@ -333,21 +339,26 @@ class LayoutValidator:
         if trav_result.isolated_region_count > 0:
             issues.append(ValidationIssue(
                 severity=ValidationSeverity.ERROR,
-                message=f"{trav_result.isolated_region_count} isolated region(s) due to Z-level mismatches",
+                message=f"{trav_result.isolated_region_count} isolated region(s) not connected to main layout - add halls to create paths",
             ))
 
         return issues
 
     def _check_floor_connectors(self, layout: DungeonLayout) -> List[ValidationIssue]:
         """
-        Check that adjacent floor levels are connected by VerticalStairHall primitives.
+        Check that adjacent floor levels are connected by vertical connectors.
+
+        Vertical connectors include:
+        - VerticalStairHall (bottom/top portals at z_level=0/160)
+        - Multi-floor rooms (entrance/upper portals at z_level=0/160)
 
         This validation catches layouts where multiple z-levels exist but lack
-        vertical connectors between them. Without stairs, upper/lower floors
-        are unreachable even if they have valid connections at their own level.
+        vertical connectors between them. Without stairs or multi-floor rooms,
+        upper/lower floors are unreachable even if they have valid connections
+        at their own level.
 
-        Enhanced to check CONNECTIVITY of stair portals, not just existence.
-        A stair with a disconnected portal is not a valid floor connector.
+        Enhanced to check CONNECTIVITY of connector portals, not just existence.
+        A connector with a disconnected portal is not a valid floor connector.
 
         Returns:
             List of ValidationIssues for missing or disconnected floor connectors
@@ -369,11 +380,12 @@ class LayoutValidator:
         # Sort z-levels to find adjacent pairs
         sorted_z = sorted(z_offsets)
 
-        # Find all VerticalStairHall primitives and check their connection status
-        # Track: (bottom_z, top_z, bottom_connected, top_connected, prim_id)
-        vertical_connectors: List[Tuple[float, float, bool, bool, str]] = []
+        # Find all vertical connectors (VerticalStairHall and multi-floor rooms)
+        # Track: (bottom_z, top_z, bottom_connected, top_connected, prim_id, connector_type)
+        vertical_connectors: List[Tuple[float, float, bool, bool, str, str]] = []
 
         for prim_id, prim in layout.primitives.items():
+            # Check VerticalStairHall
             if prim.primitive_type == "VerticalStairHall":
                 bottom_z = prim.z_offset
                 # Get z_level for top portal (uses enhanced get_portal_z_level with fallback)
@@ -394,7 +406,7 @@ class LayoutValidator:
                        (conn.primitive_b_id == prim_id and conn.portal_b_id == 'top'):
                         top_connected = True
 
-                vertical_connectors.append((bottom_z, top_z, bottom_connected, top_connected, prim_id))
+                vertical_connectors.append((bottom_z, top_z, bottom_connected, top_connected, prim_id, 'VerticalStairHall'))
 
                 # Report specific disconnection issues for this stair
                 if not bottom_connected:
@@ -412,40 +424,85 @@ class LayoutValidator:
                         portal_id='top',
                     ))
 
+            # Check multi-floor rooms (entrance at z=0, upper at z=160)
+            elif prim.primitive_type in MULTI_FLOOR_ROOM_TYPES:
+                entrance_z = prim.z_offset
+                # Upper portal is at z_level=160 relative to room origin
+                upper_z_level = prim.get_portal_z_level('upper')
+                upper_z = entrance_z + upper_z_level
+
+                # Check if each portal is connected
+                entrance_connected = False
+                upper_connected = False
+
+                for conn in layout.connections:
+                    # Check entrance portal
+                    if (conn.primitive_a_id == prim_id and conn.portal_a_id == 'entrance') or \
+                       (conn.primitive_b_id == prim_id and conn.portal_b_id == 'entrance'):
+                        entrance_connected = True
+                    # Check upper portal
+                    if (conn.primitive_a_id == prim_id and conn.portal_a_id == 'upper') or \
+                       (conn.primitive_b_id == prim_id and conn.portal_b_id == 'upper'):
+                        upper_connected = True
+
+                vertical_connectors.append((entrance_z, upper_z, entrance_connected, upper_connected, prim_id, prim.primitive_type))
+
+                # Report specific disconnection issues for this multi-floor room
+                if not entrance_connected:
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        message=f"Disconnected: {prim.primitive_type} entrance portal at z={entrance_z:.0f}",
+                        primitive_id=prim_id,
+                        portal_id='entrance',
+                    ))
+                if not upper_connected:
+                    # Only report as error if the upper portal COULD connect to something
+                    # (i.e., there's a floor at or above its z-level).
+                    # Multi-floor rooms on the TOP floor have upper portals that extend
+                    # ABOVE the highest floor - these are expected dead ends, not errors.
+                    max_floor_z = sorted_z[-1]
+                    if upper_z <= max_floor_z + 2:  # +2 for tolerance
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            message=f"Disconnected: {prim.primitive_type} upper portal at z={upper_z:.0f}",
+                            primitive_id=prim_id,
+                            portal_id='upper',
+                        ))
+
         # Check each adjacent z-level pair
         for i in range(len(sorted_z) - 1):
             lower_z = sorted_z[i]
             upper_z = sorted_z[i + 1]
 
-            # Check if any FULLY CONNECTED VerticalStairHall connects these levels
+            # Check if any FULLY CONNECTED vertical connector connects these levels
             has_full_connector = False
             has_partial_connector = False
 
-            for bottom_z, top_z, bottom_conn, top_conn, _ in vertical_connectors:
+            for bottom_z, top_z, bottom_conn, top_conn, _, connector_type in vertical_connectors:
                 if abs(bottom_z - lower_z) < 1.0 and abs(top_z - upper_z) < 1.0:
                     if bottom_conn and top_conn:
                         has_full_connector = True
                         break
                     else:
-                        # Stair exists but one or both portals disconnected
+                        # Connector exists but one or both portals disconnected
                         has_partial_connector = True
 
             if not has_full_connector:
                 if has_partial_connector:
-                    # Stair exists but is disconnected
+                    # Connector exists but is disconnected
                     issues.append(ValidationIssue(
                         severity=ValidationSeverity.ERROR,
-                        message=f"[Floor] VerticalStairHall between z={lower_z:.0f} and z={upper_z:.0f} has disconnected portal(s)",
+                        message=f"[Floor] Floor connector between z={lower_z:.0f} and z={upper_z:.0f} has disconnected portal(s)",
                     ))
                 else:
-                    # No stair at all
+                    # No connector at all
                     issues.append(ValidationIssue(
                         severity=ValidationSeverity.ERROR,
-                        message=f"[Floor] No VerticalStairHall between z={lower_z:.0f} and z={upper_z:.0f}",
+                        message=f"[Floor] No floor connector between z={lower_z:.0f} and z={upper_z:.0f}",
                     ))
                     issues.append(ValidationIssue(
                         severity=ValidationSeverity.INFO,
-                        message=f"  Add a VerticalStairHall at z={lower_z:.0f} with height_change={upper_z - lower_z:.0f}",
+                        message=f"  Add VerticalStairHall or multi-floor room at z={lower_z:.0f} (height_change={upper_z - lower_z:.0f})",
                     ))
 
         return issues
@@ -489,15 +546,238 @@ class LayoutValidator:
         disconnected = all_ids - visited
 
         if disconnected:
+            # Build reverse lookup: which primitives is each disconnected one connected to?
+            disconnected_peers: Dict[str, Set[str]] = {pid: set() for pid in disconnected}
+            for conn in layout.connections:
+                if conn.primitive_a_id in disconnected_peers and conn.primitive_b_id in disconnected:
+                    disconnected_peers[conn.primitive_a_id].add(conn.primitive_b_id)
+                    disconnected_peers[conn.primitive_b_id].add(conn.primitive_a_id)
+
+            # Find open (unconnected) portals on disconnected primitives
             for pid in disconnected:
                 prim = layout.primitives[pid]
-                issues.append(ValidationIssue(
-                    severity=ValidationSeverity.ERROR,
-                    message=f"Disconnected: {prim.primitive_type}",
-                    primitive_id=pid
-                ))
+                peers = disconnected_peers[pid]
+
+                # Find which portals are NOT connected
+                connected_portals = set()
+                for conn in layout.connections:
+                    if conn.primitive_a_id == pid:
+                        connected_portals.add(conn.portal_a_id)
+                    elif conn.primitive_b_id == pid:
+                        connected_portals.add(conn.portal_b_id)
+
+                open_portals = []
+                if prim.footprint:
+                    for portal in prim.footprint.portals:
+                        if portal.id not in connected_portals:
+                            portal_cell = prim.get_portal_world_cell(portal)
+                            portal_dir = portal.rotated_direction(prim.rotation)
+                            open_portals.append((portal.id, portal_cell, portal_dir))
+
+                if peers:
+                    # Has connections but in an isolated cluster
+                    peer_names = [layout.primitives[p].primitive_type for p in list(peers)[:2]]
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        message=f"Isolated cluster: {prim.primitive_type} + {', '.join(peer_names)}",
+                        primitive_id=pid
+                    ))
+                    # Show which portal needs connection to main layout
+                    if open_portals:
+                        portal_id, portal_cell, portal_dir = open_portals[0]
+                        adjacent = portal_cell.neighbor(portal_dir)
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.INFO,
+                            message=f"  -> '{portal_id}' portal at ({portal_cell.x},{portal_cell.y}) faces {portal_dir.value}, needs hall at ({adjacent.x},{adjacent.y})",
+                            primitive_id=pid
+                        ))
+                else:
+                    # Truly disconnected - no connections at all
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        message=f"No connections: {prim.primitive_type} at ({prim.origin_cell.x},{prim.origin_cell.y})",
+                        primitive_id=pid
+                    ))
+                    # Show where portals are
+                    if open_portals:
+                        portal_id, portal_cell, portal_dir = open_portals[0]
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.INFO,
+                            message=f"  -> '{portal_id}' portal at ({portal_cell.x},{portal_cell.y}) needs adjacent primitive",
+                            primitive_id=pid
+                        ))
+
+        # If there are disconnected clusters, analyze the gap to main layout
+        if disconnected and visited:
+            gap_analysis = self._analyze_layout_gap(layout, visited, disconnected)
+            issues.extend(gap_analysis)
 
         return issues, len(visited), list(disconnected)
+
+    def _analyze_layout_gap(self, layout: DungeonLayout, main_ids: Set[str],
+                              disconnected_ids: Set[str]) -> List[ValidationIssue]:
+        """
+        Analyze the gap between main layout and disconnected clusters.
+
+        Finds open portals on main layout and nearest open portals on disconnected
+        clusters, then calculates what's needed to bridge them.
+
+        Returns:
+            List of ValidationIssues with gap analysis
+        """
+        issues = []
+
+        # Find open portals on main layout
+        main_open_portals = []
+        for pid in main_ids:
+            prim = layout.primitives[pid]
+            if not prim.footprint:
+                continue
+
+            connected_portals = set()
+            for conn in layout.connections:
+                if conn.primitive_a_id == pid:
+                    connected_portals.add(conn.portal_a_id)
+                elif conn.primitive_b_id == pid:
+                    connected_portals.add(conn.portal_b_id)
+
+            for portal in prim.footprint.portals:
+                if portal.id not in connected_portals:
+                    portal_cell = prim.get_portal_world_cell(portal)
+                    portal_dir = portal.rotated_direction(prim.rotation)
+                    portal_z = prim.z_offset + prim.get_portal_z_level(portal.id)
+                    main_open_portals.append((pid, prim.primitive_type, portal.id,
+                                              portal_cell, portal_dir, portal_z))
+
+        # Find open portals on disconnected clusters
+        disconnected_open_portals = []
+        for pid in disconnected_ids:
+            prim = layout.primitives[pid]
+            if not prim.footprint:
+                continue
+
+            connected_portals = set()
+            for conn in layout.connections:
+                if conn.primitive_a_id == pid:
+                    connected_portals.add(conn.portal_a_id)
+                elif conn.primitive_b_id == pid:
+                    connected_portals.add(conn.portal_b_id)
+
+            for portal in prim.footprint.portals:
+                if portal.id not in connected_portals:
+                    portal_cell = prim.get_portal_world_cell(portal)
+                    portal_dir = portal.rotated_direction(prim.rotation)
+                    portal_z = prim.z_offset + prim.get_portal_z_level(portal.id)
+                    disconnected_open_portals.append((pid, prim.primitive_type, portal.id,
+                                                       portal_cell, portal_dir, portal_z))
+
+        if not main_open_portals or not disconnected_open_portals:
+            return issues
+
+        # Find closest pair of compatible portals (same Z-level, could connect)
+        best_gap = None
+        best_main = None
+        best_disconnected = None
+
+        for main_info in main_open_portals:
+            _, main_type, main_portal_id, main_cell, main_dir, main_z = main_info
+            # Cell that main portal faces
+            main_facing = main_cell.neighbor(main_dir)
+
+            for disc_info in disconnected_open_portals:
+                _, disc_type, disc_portal_id, disc_cell, disc_dir, disc_z = disc_info
+
+                # Check Z compatibility
+                if abs(main_z - disc_z) > 2:
+                    continue
+
+                # Check if portals could face each other
+                disc_facing = disc_cell.neighbor(disc_dir)
+
+                # Calculate gap - number of cells between facing cells
+                # Portals connect when facing cells are adjacent
+                dx = abs(main_facing.x - disc_facing.x)
+                dy = abs(main_facing.y - disc_facing.y)
+
+                # Check if they're on the same axis (could connect with halls)
+                if main_dir in (PortalDirection.NORTH, PortalDirection.SOUTH):
+                    # Vertical connection - need same X
+                    if main_facing.x == disc_facing.x:
+                        gap = abs(main_facing.y - disc_facing.y)
+                        if best_gap is None or gap < best_gap:
+                            best_gap = gap
+                            best_main = main_info
+                            best_disconnected = disc_info
+                else:
+                    # Horizontal connection - need same Y
+                    if main_facing.y == disc_facing.y:
+                        gap = abs(main_facing.x - disc_facing.x)
+                        if best_gap is None or gap < best_gap:
+                            best_gap = gap
+                            best_main = main_info
+                            best_disconnected = disc_info
+
+        if best_gap is not None and best_main and best_disconnected:
+            _, main_type, main_portal_id, main_cell, main_dir, _ = best_main
+            _, disc_type, disc_portal_id, disc_cell, disc_dir, _ = best_disconnected
+            main_facing = main_cell.neighbor(main_dir)
+            disc_facing = disc_cell.neighbor(disc_dir)
+
+            if best_gap == 0:
+                # Adjacent but not connected - should have connected automatically
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"Gap analysis: {main_type}.{main_portal_id} is adjacent to {disc_type}.{disc_portal_id} but not connected (check Z-levels)",
+                ))
+            elif best_gap <= 4:
+                # Small gap - show exactly what's needed
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"Gap analysis: Need {best_gap} cell(s) of halls between main layout and isolated cluster",
+                ))
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"  Main: {main_type}.{main_portal_id} at ({main_cell.x},{main_cell.y}) facing {main_dir.value}",
+                ))
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"  Isolated: {disc_type}.{disc_portal_id} at ({disc_cell.x},{disc_cell.y}) facing {disc_dir.value}",
+                ))
+                # Show suggested hall positions
+                if main_dir in (PortalDirection.NORTH, PortalDirection.SOUTH):
+                    # Vertical gap
+                    start_y = min(main_facing.y, disc_facing.y)
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"  -> Place StraightHall(s) at x={main_facing.x} from y={start_y} onward",
+                    ))
+                else:
+                    # Horizontal gap
+                    start_x = min(main_facing.x, disc_facing.x)
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"  -> Place StraightHall(s) at y={main_facing.y} from x={start_x} onward",
+                    ))
+            else:
+                # Large gap or misaligned
+                dx = abs(main_facing.x - disc_facing.x)
+                dy = abs(main_facing.y - disc_facing.y)
+                if dx > 0 and dy > 0:
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"Gap analysis: Main and isolated clusters are misaligned (X offset: {dx}, Y offset: {dy})",
+                    ))
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"  Use SquareCorner or TJunction to change direction, plus halls to bridge",
+                    ))
+                else:
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"Gap analysis: {best_gap} cells between main layout and isolated cluster",
+                    ))
+
+        return issues
 
     def get_reachable_from(self, layout: DungeonLayout, start_id: str) -> Set[str]:
         """Get all primitives reachable from a starting primitive."""

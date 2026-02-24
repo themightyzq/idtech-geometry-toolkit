@@ -15,6 +15,10 @@ from ..core import Severity, ValidationIssue, ValidationResult
 from ..rules import MOD_001, MOD_002, MOD_003, MOD_004, MOD_005
 from .geometry_checks import validate_brushes
 
+# Categories for "Open Modules" that are placed inside rooms and don't need footprints
+# Per CLAUDE.md Section 5: Structural and Connective are "Open Modules"
+OPEN_MODULE_CATEGORIES: Set[str] = {'Structural', 'Connective'}
+
 
 def validate_module_registration(
     module_cls: Type,
@@ -123,8 +127,19 @@ def validate_module_contract(
     module_name = module_cls.get_display_name()
     test_rotations = rotations or [0, 90, 180, 270]
 
-    # First check registration
-    reg_result = validate_module_registration(module_cls)
+    # Determine if this is an open module (doesn't need footprint)
+    # Per CLAUDE.md Section 5: Structural and Connective are "Open Modules"
+    try:
+        category = module_cls.get_category()
+        is_open_module = category in OPEN_MODULE_CATEGORIES
+    except (AttributeError, TypeError):
+        is_open_module = False
+
+    # First check registration (skip footprint check for open modules)
+    reg_result = validate_module_registration(
+        module_cls,
+        check_footprint=not is_open_module
+    )
     result.merge(reg_result)
 
     # Test generation at each rotation
@@ -155,8 +170,8 @@ def validate_module_contract(
             )
             result.merge(geom_result)
 
-            # Check footprint bounds (MOD-005)
-            if check_rotations:
+            # Check footprint bounds (MOD-005) - skip for open modules
+            if check_rotations and not is_open_module:
                 footprint_issues = _check_footprint_bounds(
                     module_cls, brushes, rotation
                 )

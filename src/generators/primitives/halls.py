@@ -894,38 +894,41 @@ class SquareCorner(HallBase):
         ))
 
         # ===== ARM A (SOUTH - extends from center toward portal A) =====
-        arm_a_start_y = cy - hw - t
+        # Per TJunction/Crossroads pattern: arm floors start at center EDGE, not extended position
+        arm_a_start_y = cy - hw  # Start at center edge (not cy - hw - t)
         arm_a_end_y = oy
 
         # Floor for arm A
+        # NOTE: Y starts at oy (not oy - t) to keep geometry within footprint.
+        # The connecting module extends its floor by t toward us for overlap.
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y - t, oz - t,
+            cx - hw - t, arm_a_end_y, oz - t,
             cx + hw + t, arm_a_start_y, oz,
             self.floor_texture
         ))
         # Ceiling for arm A
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y - t, oz + h,
+            cx - hw - t, arm_a_end_y, oz + h,
             cx + hw + t, arm_a_start_y, oz + h + t,
             self.ceiling_texture
         ))
 
-        # Walls for arm A
+        # Walls for arm A (full length from center to portal)
         # West wall
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y - t, oz,
-            cx - hw, arm_a_start_y, oz + h,
+            cx - hw - t, arm_a_end_y, oz,
+            cx - hw, cy + hw, oz + h,  # Extend to cy + hw to seal corner
             self.wall_texture
         ))
         # East wall
         brushes.append(self._box(
-            cx + hw, arm_a_end_y - t, oz,
+            cx + hw, arm_a_end_y, oz,
             cx + hw + t, arm_a_start_y, oz + h,
             self.wall_texture
         ))
 
         # ===== ARM B (EAST - extends from center toward portal B) =====
-        arm_b_start_x = cx + hw + t
+        arm_b_start_x = cx + hw  # Start at center edge (not cx + hw + t)
         arm_b_end_x = ox + 2 * grid_size
 
         # Floor for arm B
@@ -955,19 +958,9 @@ class SquareCorner(HallBase):
             self.wall_texture
         ))
 
-        # ===== CORNER FILL WALLS =====
-        # West wall for center area (seals the west side of the L)
-        # Extends from end of arm A walls up to the ceiling
-        # Only create if there's space between arm A and center
-        if arm_a_start_y < cy - hw:
-            brushes.append(self._box(
-                cx - hw - t, arm_a_start_y, oz,
-                cx - hw, cy + hw, oz + h,
-                self.wall_texture
-            ))
-
-        # Northwest corner fill (seals the area above the corridor in cell column 0)
-        # Only create if there's space above cy + hw (corridor ceiling)
+        # ===== NORTHWEST CORNER SEAL =====
+        # Single brush seals the NW quadrant (cell 0,1 solid area)
+        # Extends from corridor top (cy + hw) to footprint edge (oy + 2*grid_size)
         corner_fill_min_y = cy + hw
         corner_fill_max_y = oy + 2 * grid_size
         if corner_fill_max_y > corner_fill_min_y:
@@ -977,39 +970,28 @@ class SquareCorner(HallBase):
                 self.wall_texture
             ))
 
-        # Solid corner fill for cell (1,0) - the unused quadrant
-        # Only needed when the junction is at cell (0,1), not (1,1)
-        solid_corner_min_x = cx + hw + t
-        solid_corner_max_x = ox + 2 * grid_size
-        solid_corner_min_y = oy - t
-        solid_corner_max_y = cy - hw - t
-        if solid_corner_max_x > solid_corner_min_x and solid_corner_max_y > solid_corner_min_y:
-            brushes.append(self._box(
-                solid_corner_min_x, solid_corner_min_y, oz - t,
-                solid_corner_max_x, solid_corner_max_y, oz + h + t,
-                self.wall_texture
-            ))
-
         # ===== PORTAL WALLS =====
         # Portal A (SOUTH)
+        # NOTE: Portal wall pieces stay within footprint (Y >= oy).
+        # The connecting module's wall pieces extend toward us for overlap.
         if self.portal_a:
-            # Left wall piece
+            # Left wall piece (seals corner between west wall and portal)
             brushes.append(self._box(
-                cx - hw - t, oy - t, oz,
-                cx - hw, oy, oz + h,
+                cx - hw - t, oy, oz,
+                cx - hw, oy + t, oz + h,
                 self.wall_texture
             ))
-            # Right wall piece
+            # Right wall piece (seals corner between east wall and portal)
             brushes.append(self._box(
-                cx + hw, oy - t, oz,
-                cx + hw + t, oy, oz + h,
+                cx + hw, oy, oz,
+                cx + hw + t, oy + t, oz + h,
                 self.wall_texture
             ))
         else:
-            # Solid wall
+            # Solid wall (when portal is closed)
             brushes.append(self._box(
-                cx - hw - t, oy - t, oz,
-                cx + hw + t, oy, oz + h,
+                cx - hw - t, oy, oz,
+                cx + hw + t, oy + t, oz + h,
                 self.wall_texture
             ))
 

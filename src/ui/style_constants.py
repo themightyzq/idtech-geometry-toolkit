@@ -180,6 +180,18 @@ SEVERITY_INFO = "#2196F3"         # Blue
 SEVERITY_SUCCESS = "#4caf50"      # Green
 
 # =============================================================================
+# AXIS COLORS (for orthographic views / 3D gizmos)
+# =============================================================================
+# Standard convention: X=Red, Y=Green, Z=Blue (RGB = XYZ)
+
+AXIS_X_COLOR = "#E53935"          # Red - X axis
+AXIS_Y_COLOR = "#43A047"          # Green - Y axis
+AXIS_Z_COLOR = "#1E88E5"          # Blue - Z axis
+AXIS_X_COLOR_TUPLE = (0.898, 0.224, 0.208)  # For OpenGL
+AXIS_Y_COLOR_TUPLE = (0.263, 0.627, 0.278)  # For OpenGL
+AXIS_Z_COLOR_TUPLE = (0.118, 0.533, 0.898)  # For OpenGL
+
+# =============================================================================
 # HIGH-CONTRAST MODE OVERRIDES (WCAG AAA - 7:1+ contrast ratios)
 # =============================================================================
 # When HIGH_CONTRAST_MODE is enabled, override key colors for maximum visibility.

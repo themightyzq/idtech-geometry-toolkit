@@ -36,6 +36,7 @@ PORTAL_COLORS = {
     'enabled': QColor(76, 175, 80),     # Green
     'disabled': QColor(158, 158, 158),  # Gray
     'connected': QColor(33, 150, 243),  # Blue
+    'upper_level': QColor(255, 152, 0), # Orange for z_level > 0 (upper portals)
 }
 
 
@@ -78,6 +79,7 @@ class CellItem(QGraphicsItem):
         self._selected = False
         self._hovered = False
         self._dragging = False  # True when item is being dragged
+        self._floor_dimmed = False  # True when on a different floor than filter
 
         # Set flags
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -124,6 +126,10 @@ class CellItem(QGraphicsItem):
 
         # Apply floor level tint for multi-level visualization
         base_color = _blend_with_floor_tint(base_color, self._primitive.z_offset)
+
+        # Apply floor dimming first (reduced opacity for non-selected floors)
+        if self._floor_dimmed and not self._selected:
+            painter.setOpacity(0.3)
 
         # Adjust color based on state
         if self._dragging:
@@ -282,11 +288,14 @@ class CellItem(QGraphicsItem):
                 py = cell_center_y - portal_length / 2
                 pw, ph = portal_size, portal_length
 
-            # Color based on portal state
-            if portal.enabled:
-                color = PORTAL_COLORS['enabled']
-            else:
+            # Color based on portal state and z_level
+            if not portal.enabled:
                 color = PORTAL_COLORS['disabled']
+            elif portal.z_level > 0:
+                # Upper-level portals (z_level=160) shown in orange
+                color = PORTAL_COLORS['upper_level']
+            else:
+                color = PORTAL_COLORS['enabled']
 
             painter.setPen(QPen(color.darker(120), 1))
             painter.setBrush(QBrush(color))
@@ -295,6 +304,26 @@ class CellItem(QGraphicsItem):
             # Draw direction arrow when selected (shows portal direction clearly)
             if self._selected:
                 self._draw_portal_arrow(painter, px, py, pw, ph, direction, color)
+
+            # Draw z_level label for portals at non-zero z_level when selected
+            if self._selected and portal.z_level != 0:
+                z_label = f"Z:{portal.z_level}"
+                font = QFont()
+                font.setPointSize(7)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(QPen(QColor(255, 255, 255)))
+
+                # Position label near portal
+                label_rect = QRectF(px - 5, py - 12, pw + 10, 12)
+                if direction == PortalDirection.SOUTH:
+                    label_rect = QRectF(px - 5, py + ph, pw + 10, 12)
+                elif direction == PortalDirection.EAST:
+                    label_rect = QRectF(px + pw, py - 5, 30, 12)
+                elif direction == PortalDirection.WEST:
+                    label_rect = QRectF(px - 35, py - 5, 30, 12)
+
+                painter.drawText(label_rect, Qt.AlignCenter, z_label)
 
     def _draw_portal_arrow(self, painter: QPainter, px: float, py: float,
                            pw: float, ph: float, direction: PortalDirection,
@@ -416,6 +445,15 @@ class CellItem(QGraphicsItem):
     def set_dragging(self, dragging: bool):
         """Set dragging state for visual feedback."""
         self._dragging = dragging
+        self.update()
+
+    def set_floor_dimmed(self, dimmed: bool):
+        """Set floor dimmed state (for floor filter visualization).
+
+        When dimmed, the primitive is rendered at reduced opacity to
+        indicate it's on a different floor than the current filter.
+        """
+        self._floor_dimmed = dimmed
         self.update()
 
     def hoverEnterEvent(self, event):
