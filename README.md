@@ -2,6 +2,8 @@
 
 A PyQt5 desktop application for generating brush geometry for idTech engines (Quake, Doom 3).
 
+![Screenshot](screenshot.png)
+
 ## Features
 
 - **43 Geometric Modules** — Rooms, halls, multi-floor rooms, arches, staircases, pillars, and more
