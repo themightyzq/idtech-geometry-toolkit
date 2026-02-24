@@ -899,30 +899,29 @@ class SquareCorner(HallBase):
         arm_a_end_y = oy
 
         # Floor for arm A
-        # NOTE: Y starts at oy (not oy - t) to keep geometry within footprint.
-        # The connecting module extends its floor by t toward us for overlap.
+        # Per CLAUDE.md §5: Floor extends by t in ALL directions at portal edges
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y, oz - t,
+            cx - hw - t, arm_a_end_y - t, oz - t,
             cx + hw + t, arm_a_start_y, oz,
             self.floor_texture
         ))
         # Ceiling for arm A
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y, oz + h,
+            cx - hw - t, arm_a_end_y - t, oz + h,
             cx + hw + t, arm_a_start_y, oz + h + t,
             self.ceiling_texture
         ))
 
         # Walls for arm A (full length from center to portal)
-        # West wall
+        # West wall - extends to arm_a_end_y - t for t-extension overlap
         brushes.append(self._box(
-            cx - hw - t, arm_a_end_y, oz,
+            cx - hw - t, arm_a_end_y - t, oz,
             cx - hw, cy + hw, oz + h,  # Extend to cy + hw to seal corner
             self.wall_texture
         ))
         # East wall
         brushes.append(self._box(
-            cx + hw, arm_a_end_y, oz,
+            cx + hw, arm_a_end_y - t, oz,
             cx + hw + t, arm_a_start_y, oz + h,
             self.wall_texture
         ))
@@ -970,52 +969,35 @@ class SquareCorner(HallBase):
                 self.wall_texture
             ))
 
-        # ===== PORTAL WALLS =====
-        # Portal A (SOUTH)
-        # NOTE: Portal wall pieces stay within footprint (Y >= oy).
-        # The connecting module's wall pieces extend toward us for overlap.
-        if self.portal_a:
-            # Left wall piece (seals corner between west wall and portal)
+        # ===== SOUTHEAST CORNER SEAL =====
+        # Seals the SE quadrant (area between arm A east wall and arm B south wall)
+        se_fill_min_x = cx + hw
+        se_fill_max_x = arm_b_end_x + t
+        se_fill_min_y = oy
+        se_fill_max_y = cy - hw
+        if se_fill_max_x > se_fill_min_x and se_fill_max_y > se_fill_min_y:
             brushes.append(self._box(
-                cx - hw - t, oy, oz,
-                cx - hw, oy + t, oz + h,
-                self.wall_texture
-            ))
-            # Right wall piece (seals corner between east wall and portal)
-            brushes.append(self._box(
-                cx + hw, oy, oz,
-                cx + hw + t, oy + t, oz + h,
-                self.wall_texture
-            ))
-        else:
-            # Solid wall (when portal is closed)
-            brushes.append(self._box(
-                cx - hw - t, oy, oz,
-                cx + hw + t, oy + t, oz + h,
+                se_fill_min_x, se_fill_min_y, oz - t,
+                se_fill_max_x, se_fill_max_y, oz + h + t,
                 self.wall_texture
             ))
 
-        # Portal B (EAST)
-        if self.portal_b:
-            # Top wall piece
-            brushes.append(self._box(
-                arm_b_end_x, cy + hw, oz,
-                arm_b_end_x + t, cy + hw + t, oz + h,
-                self.wall_texture
-            ))
-            # Bottom wall piece
-            brushes.append(self._box(
-                arm_b_end_x, cy - hw - t, oz,
-                arm_b_end_x + t, cy - hw, oz + h,
-                self.wall_texture
-            ))
-        else:
-            # Solid wall
-            brushes.append(self._box(
-                arm_b_end_x, cy - hw - t, oz,
-                arm_b_end_x + t, cy + hw + t, oz + h,
-                self.wall_texture
-            ))
+        # ===== PORTAL WALLS =====
+        # Portal A (SOUTH) - use unified portal wall system with lintels
+        brushes.extend(self._wall_with_portal(
+            cx - hw - t, oy, oz,
+            cx + hw + t, oy + t, oz + h,
+            self.portal_a,
+            portal_axis="x"
+        ))
+
+        # Portal B (EAST) - use unified portal wall system with lintels
+        brushes.extend(self._wall_with_portal(
+            arm_b_end_x, cy - hw - t, oz,
+            arm_b_end_x + t, cy + hw + t, oz + h,
+            self.portal_b,
+            portal_axis="y"
+        ))
 
         # === REGISTER PORTAL TAGS ===
         # Portal A (SOUTH facing, at Y=oy)
@@ -1292,6 +1274,21 @@ class TJunction(HallBase):
         brushes.append(self._box(
             cx + hw, cy + hw, wall_bottom,
             cx + hw + t, cy + stem_len + t, ceiling_z
+        ))
+
+        # === CORNER FILLS (seal unused corners beside stem) ===
+        # Per CLAUDE.md S5: "Junction fills: Seal corners where width changes"
+        # The T-shape leaves NW and NE corners (beside the stem) without ceiling.
+        # Fill them with solid blocks from floor bottom to ceiling top.
+        # NW corner: west of stem, north of crossbar
+        brushes.append(self._box(
+            cx - half_crossbar - t, cy + hw + t, wall_bottom,
+            cx - hw, cy + stem_len + t, ceiling_z + t
+        ))
+        # NE corner: east of stem, north of crossbar
+        brushes.append(self._box(
+            cx + hw, cy + hw + t, wall_bottom,
+            cx + half_crossbar + t, cy + stem_len + t, ceiling_z + t
         ))
 
         # === END WALLS WITH PORTALS ===
@@ -1619,6 +1616,31 @@ class Crossroads(HallBase):
         brushes.append(self._box(ox + hw, oy + hw, wall_bottom, ox + arm_e + t, oy + hw + t, ceiling_z))
         brushes.append(self._box(ox + hw, oy - hw - t, wall_bottom, ox + arm_e + t, oy - hw, ceiling_z))
 
+        # === CORNER FILLS (seal diagonal corners of footprint) ===
+        # Per CLAUDE.md §5: "Junction fills: Seal corners where width changes, overlap by >= t"
+        # The cross-shaped floor/ceiling leave 4 corners empty. Fill them with solid
+        # blocks from floor bottom to ceiling top to prevent BSP leaks.
+        # NE corner: between north arm (+Y) and east arm (+X)
+        brushes.append(self._box(
+            ox + hw, oy + hw, wall_bottom,
+            ox + arm_e + t, oy + arm_n + t, ceiling_z + t
+        ))
+        # NW corner: between north arm (+Y) and west arm (-X)
+        brushes.append(self._box(
+            ox - arm_w - t, oy + hw, wall_bottom,
+            ox - hw, oy + arm_n + t, ceiling_z + t
+        ))
+        # SE corner: between south arm (-Y) and east arm (+X)
+        brushes.append(self._box(
+            ox + hw, oy - arm_s - t, wall_bottom,
+            ox + arm_e + t, oy - hw, ceiling_z + t
+        ))
+        # SW corner: between south arm (-Y) and west arm (-X)
+        brushes.append(self._box(
+            ox - arm_w - t, oy - arm_s - t, wall_bottom,
+            ox - hw, oy - hw, ceiling_z + t
+        ))
+
         # === END WALLS WITH PORTALS ===
         # End walls must extend to ceiling_z, not just portal_z + h
         # This ensures no gaps at multi-height junctions
@@ -1843,10 +1865,9 @@ class VerticalStairHall(HallBase):
         total_y2 = top_landing_y2
 
         # === BOTTOM LANDING FLOOR ===
-        # Floor extends by t in X (perpendicular to portal) but NOT in Y (portal direction)
-        # This keeps portal at footprint edge (Y=0) for proper alignment
+        # Per CLAUDE.md §5: Floor extends by t in ALL directions, including portal direction
         brushes.append(self._box(
-            ox - hw - t, bottom_landing_y1, bottom_z - t,
+            ox - hw - t, bottom_landing_y1 - t, bottom_z - t,
             ox + hw + t, bottom_landing_y2, bottom_z
         ))
 
@@ -1866,50 +1887,53 @@ class VerticalStairHall(HallBase):
         ))
 
         # === TOP LANDING FLOOR ===
-        # Floor extends by t in X but NOT in Y (portal direction)
-        # This keeps portal at footprint edge for proper alignment
+        # Per CLAUDE.md §5: Floor extends by t in ALL directions, including portal direction
         brushes.append(self._box(
             ox - hw - t, top_landing_y1, top_z - t,
-            ox + hw + t, top_landing_y2, top_z
+            ox + hw + t, top_landing_y2 + t, top_z
         ))
 
         # === CEILING ===
-        # Single ceiling spanning the entire stairwell at ceiling_z
+        # Per CLAUDE.md §5: Ceiling extends by t in ALL directions
         brushes.append(self._box(
-            ox - hw - t, total_y1, ceiling_z,
-            ox + hw + t, total_y2, ceiling_z + t
+            ox - hw - t, total_y1 - t, ceiling_z,
+            ox + hw + t, total_y2 + t, ceiling_z + t
         ))
 
         # === SIDE WALLS ===
+        # Per CLAUDE.md §5: Walls span full floor/ceiling extent including t-extensions
         # Left wall (spans full height from bottom floor to ceiling)
         brushes.append(self._box(
-            ox - hw - t, total_y1, bottom_z - t,
-            ox - hw, total_y2, ceiling_z
+            ox - hw - t, total_y1 - t, bottom_z - t,
+            ox - hw, total_y2 + t, ceiling_z
         ))
 
         # Right wall (spans full height from bottom floor to ceiling)
         brushes.append(self._box(
-            ox + hw, total_y1, bottom_z - t,
-            ox + hw + t, total_y2, ceiling_z
+            ox + hw, total_y1 - t, bottom_z - t,
+            ox + hw + t, total_y2 + t, ceiling_z
         ))
 
         # === END WALLS WITH PORTALS ===
-        # Walls are INSIDE footprint bounds so portals align with footprint edges
+        # Portal walls must be at footprint edges for proper alignment with
+        # connecting modules.  StraightHall uses (oy-t, oy) for the south wall
+        # and (oy+length, oy+length+t) for the north wall — the outer face sits
+        # at the footprint boundary.  We follow the same convention here.
 
         # Bottom wall (SOUTH) with portal at bottom_z
-        # Wall from Y=0 to Y=t, portal opening at Y=0 (footprint south edge)
+        # Wall from Y=-t to Y=0, outer face at Y=-t (footprint south edge after normalize)
         brushes.extend(self._wall_with_portal(
-            ox - hw - t, bottom_landing_y1, bottom_z,
-            ox + hw + t, bottom_landing_y1 + t, ceiling_z,
+            ox - hw - t, bottom_landing_y1 - t, bottom_z,
+            ox + hw + t, bottom_landing_y1, ceiling_z,
             self.portal_bottom,
             portal_axis="x"
         ))
 
         # Top wall (NORTH) with portal at top_z
-        # Wall from Y=top-t to Y=top, portal opening at Y=top (footprint north edge)
+        # Wall from Y=top to Y=top+t, outer face at Y=top+t (footprint north edge after normalize)
         brushes.extend(self._wall_with_portal(
-            ox - hw - t, top_landing_y2 - t, top_z,
-            ox + hw + t, top_landing_y2, ceiling_z,
+            ox - hw - t, top_landing_y2, top_z,
+            ox + hw + t, top_landing_y2 + t, ceiling_z,
             self.portal_top,
             portal_axis="x"
         ))
@@ -1957,222 +1981,6 @@ class VerticalStairHall(HallBase):
                 "Stairwell",
                 self.stair_run,
                 abs(self.height_change),
-                self.step_height,
-                result
-            )
-
-        return result
-
-
-class SecretHall(HallBase):
-    """A corridor with CLIP-textured side walls for walk-through secret passages.
-
-    Features:
-    - Same geometry as StraightHall
-    - Side walls use CLIP texture (walk-through from outside)
-    - Floor, ceiling, and end walls remain solid
-    - Ideal for hidden shortcuts between areas
-
-    Floor plan:
-    +--[portal]--+
-    |            |  <- CLIP wall (walk-through)
-    |   HALL     |
-    |            |  <- CLIP wall (walk-through)
-    +--[portal]--+
-
-    The CLIP texture allows players to walk through the side walls
-    from outside, creating hidden passage entrances.
-    """
-
-    length: float = 256.0
-    portal_front: bool = True
-    portal_back: bool = True
-    height_delta_front: float = 0.0  # Height delta at front portal (from center)
-    height_delta_back: float = 0.0   # Height delta at back portal (from center)
-    step_height: float = 12.0        # Max step height for stairs
-
-    CLIP_TEXTURE: str = "CLIP"  # Walk-through texture
-
-    @classmethod
-    def get_display_name(cls) -> str:
-        return "Secret Hall"
-
-    @classmethod
-    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
-        instance = cls()
-        schema = instance._get_base_schema()
-        schema.update(instance._get_stair_schema())
-        schema.update({
-            "length": {
-                "type": "float", "default": 256.0, "min": 64, "max": 1024, "label": "Length",
-                "description": "Total length of the corridor from front to back"
-            },
-            "portal_front": {
-                "type": "bool", "default": True, "label": "Front Portal",
-                "description": "Enable portal opening at the front (south) end"
-            },
-            "portal_back": {
-                "type": "bool", "default": True, "label": "Back Portal",
-                "description": "Enable portal opening at the back (north) end"
-            },
-            "height_delta_front": {
-                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "Front Height Delta",
-                "description": "Height change from center to front portal (negative = descend, positive = ascend)"
-            },
-            "height_delta_back": {
-                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "Back Height Delta",
-                "description": "Height change from center to back portal (negative = descend, positive = ascend)"
-            },
-        })
-        return schema
-
-    def generate(self) -> List[Brush]:
-        self._reset_tags()  # Reset tags for fresh generation
-        ox, oy, oz = self.params.origin
-        brushes: List[Brush] = []
-
-        hw = self.hall_width / 2
-        t = self.wall_thickness
-        h = self.hall_height
-        length = self.length
-
-        # Calculate Z heights at each end
-        # Center is at midpoint (oy + length/2), which is the height baseline
-        center_y = oy + length / 2
-        center_z = oz  # Center is baseline
-        front_z = oz + self.height_delta_front
-        back_z = oz + self.height_delta_back
-
-        # Determine height range for walls/ceiling
-        min_z = min(center_z, front_z, back_z)
-        max_z = max(center_z, front_z, back_z)
-
-        # === CENTER FLOOR BOX ===
-        # Like all junction halls, SecretHall needs a center floor box at the midpoint
-        # Must extend by t in ALL directions for sealed geometry
-        brushes.append(self._box(
-            ox - hw - t, center_y - hw - t, center_z - t,
-            ox + hw + t, center_y + hw + t, center_z
-        ))
-
-        # === FRONT ARM (from center to front portal) ===
-        brushes.extend(self._generate_arm_floor(
-            arm_start=center_y - hw,  # Start at center edge
-            arm_end=oy - t,           # Always extend by t
-            perp_min=ox - hw - t,
-            perp_max=ox + hw + t,
-            z_start=center_z,
-            z_end=front_z,
-            axis="y",
-            step_height=self.step_height,
-            t=t
-        ))
-
-        # === BACK ARM (from center to back portal) ===
-        brushes.extend(self._generate_arm_floor(
-            arm_start=center_y + hw,      # Start at center edge
-            arm_end=oy + length + t,      # Always extend by t
-            perp_min=ox - hw - t,
-            perp_max=ox + hw + t,
-            z_start=center_z,
-            z_end=back_z,
-            axis="y",
-            step_height=self.step_height,
-            t=t
-        ))
-
-        # === CEILING (at max height + hall_height) ===
-        # Ceiling always extends by t for proper sealing
-        ceiling_z = max_z + h
-        brushes.append(self._box(
-            ox - hw - t, oy - t, ceiling_z,
-            ox + hw + t, oy + length + t, ceiling_z + t
-        ))
-
-        # === WALLS WITH CLIP TEXTURE ===
-        # Side walls use CLIP texture for walk-through from outside
-        wall_bottom = min_z - t
-
-        # Left wall (CLIP texture for walk-through)
-        brushes.append(self._box(
-            ox - hw - t, oy - t, wall_bottom,
-            ox - hw, oy + length + t, ceiling_z,
-            texture=self.CLIP_TEXTURE
-        ))
-
-        # Right wall (CLIP texture for walk-through)
-        brushes.append(self._box(
-            ox + hw, oy - t, wall_bottom,
-            ox + hw + t, oy + length + t, ceiling_z,
-            texture=self.CLIP_TEXTURE
-        ))
-
-        # === END WALLS WITH PORTALS ===
-        # End walls remain solid (not CLIP)
-
-        # Front wall at front_z height
-        brushes.extend(self._wall_with_portal(
-            ox - hw - t, oy - t, front_z,
-            ox + hw + t, oy, ceiling_z,
-            self.portal_front,
-            portal_axis="x"
-        ))
-
-        # Back wall at back_z height
-        brushes.extend(self._wall_with_portal(
-            ox - hw - t, oy + length, back_z,
-            ox + hw + t, oy + length + t, ceiling_z,
-            self.portal_back,
-            portal_axis="x"
-        ))
-
-        # === REGISTER PORTAL TAGS ===
-        # Register tags at actual portal positions for tag-based validation
-        # SecretHall uses same convention as StraightHall: front=SOUTH, back=NORTH
-        if self.portal_front:
-            self._register_portal_tag(
-                portal_id="back",  # Data model uses 'back' for SOUTH portal
-                center_x=ox,
-                center_y=oy,
-                center_z=front_z,
-                direction=PortalDirection.SOUTH,
-            )
-        if self.portal_back:
-            self._register_portal_tag(
-                portal_id="front",  # Data model uses 'front' for NORTH portal
-                center_x=ox,
-                center_y=oy + length,
-                center_z=back_z,
-                direction=PortalDirection.NORTH,
-            )
-
-        return brushes
-
-    def validate(self) -> ValidationResult:
-        """Validate SecretHall configuration for playability."""
-        result = ValidationResult()
-
-        hw = self.hall_width / 2
-        # SecretHall has a center floor box, so each arm is (length/2 - hw)
-        front_arm_length = max(0.0, (self.length / 2) - hw)
-        back_arm_length = max(0.0, (self.length / 2) - hw)
-
-        # Check front arm (from center to front portal)
-        if abs(self.height_delta_front) > 0.01:
-            self._check_arm_traversability(
-                "Front",
-                front_arm_length,
-                abs(self.height_delta_front),
-                self.step_height,
-                result
-            )
-
-        # Check back arm (from center to back portal)
-        if abs(self.height_delta_back) > 0.01:
-            self._check_arm_traversability(
-                "Back",
-                back_arm_length,
-                abs(self.height_delta_back),
                 self.step_height,
                 result
             )

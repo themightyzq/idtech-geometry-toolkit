@@ -218,17 +218,10 @@ class PortalSpec:
     """Specification for a portal opening.
 
     Used to configure portal generation with unified dimensions.
-
-    When is_secret is True, the portal generates a solid wall with CLIP texture
-    instead of an open portal. This creates a walk-through secret passage.
     """
     enabled: bool = True
     width: float = PORTAL_WIDTH
     height: float = PORTAL_HEIGHT
-    is_secret: bool = False  # When True, generates CLIP wall instead of open portal
-
-    # CLIP texture for walk-through walls
-    CLIP_TEXTURE: str = "CLIP"
 
     @classmethod
     def standard(cls, enabled: bool = True) -> 'PortalSpec':
@@ -239,11 +232,6 @@ class PortalSpec:
     def disabled(cls) -> 'PortalSpec':
         """Create a disabled portal spec (solid wall)."""
         return cls(enabled=False)
-
-    @classmethod
-    def secret(cls) -> 'PortalSpec':
-        """Create a secret portal spec (CLIP wall for walk-through)."""
-        return cls(enabled=True, is_secret=True)
 
 
 @dataclass
@@ -356,23 +344,20 @@ def generate_portal_wall(
     portal_spec: PortalSpec,
     portal_axis: str = "x",
     portal_center: Optional[float] = None,
-    box_with_texture_func: Optional[BoxWithTextureFunc] = None,
 ) -> Tuple[List[Brush], Optional[PortalWorldPosition]]:
     """Generate a wall with an optional portal opening.
 
     Creates unified portal geometry following CLAUDE.md sealed geometry rules:
     - When portal is enabled: creates 3 brushes (left, right, lintel)
     - When portal is disabled: creates 1 solid wall brush
-    - When portal is_secret: creates solid CLIP-textured wall for walk-through
 
     Args:
         box_func: Function to create box brushes (typically self._box from primitive)
         x1, y1, z1: Minimum corner of wall bounds
         x2, y2, z2: Maximum corner of wall bounds
-        portal_spec: Portal specification (enabled, width, height, is_secret)
+        portal_spec: Portal specification (enabled, width, height)
         portal_axis: "x" if portal spans X direction, "y" if spans Y direction
         portal_center: Center of portal along the axis (default: wall center)
-        box_with_texture_func: Optional function for creating CLIP-textured boxes
 
     Returns:
         Tuple of (brush_list, portal_world_position)
@@ -387,39 +372,6 @@ def generate_portal_wall(
         # Solid wall - no portal
         brushes.append(box_func(x1, y1, z1, x2, y2, z2))
         return brushes, None
-
-    # Handle secret portal: create CLIP wall instead of open portal
-    # Still return PortalWorldPosition for alignment validation
-    if portal_spec.is_secret and box_with_texture_func:
-        brushes.append(box_with_texture_func(x1, y1, z1, x2, y2, z2, PortalSpec.CLIP_TEXTURE))
-        # Calculate portal position for validation even for secret portals
-        pw2 = portal_spec.width / 2
-        ph = portal_spec.height
-        if portal_axis == "x":
-            center = portal_center if portal_center is not None else (x1 + x2) / 2
-            portal_position = PortalWorldPosition(
-                primitive_id="",
-                portal_id="",
-                center_x=center,
-                center_y=(y1 + y2) / 2,
-                center_z=z1 + ph / 2,
-                width=portal_spec.width,
-                height=portal_spec.height,
-                direction=PortalDirection.SOUTH if y1 < y2 else PortalDirection.NORTH,
-            )
-        else:
-            center = portal_center if portal_center is not None else (y1 + y2) / 2
-            portal_position = PortalWorldPosition(
-                primitive_id="",
-                portal_id="",
-                center_x=(x1 + x2) / 2,
-                center_y=center,
-                center_z=z1 + ph / 2,
-                width=portal_spec.width,
-                height=portal_spec.height,
-                direction=PortalDirection.WEST if x1 < x2 else PortalDirection.EAST,
-            )
-        return brushes, portal_position
 
     # Calculate portal bounds
     pw2 = portal_spec.width / 2

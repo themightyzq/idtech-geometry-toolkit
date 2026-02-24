@@ -354,30 +354,6 @@ class LayoutPanel(QWidget):
         
         layout.addLayout(corridor_layout)
 
-        # Secret Room Frequency
-        secret_layout = QHBoxLayout()
-        secret_label = QLabel("Secret Rooms:")
-        secret_label.setMinimumWidth(70)
-        secret_layout.addWidget(secret_label)
-
-        self.secret_slider = QSlider(Qt.Horizontal)
-        self.secret_slider.setRange(0, 100)
-        self.secret_slider.setValue(0)  # Default: no secret rooms
-        self.secret_slider.setTickPosition(QSlider.TicksBelow)
-        self.secret_slider.setTickInterval(10)
-        secret_layout.addWidget(self.secret_slider)
-
-        self.secret_spinbox = QSpinBox()
-        self.secret_spinbox.setRange(0, 100)
-        self.secret_spinbox.setValue(0)
-        self.secret_spinbox.setSuffix("%")
-        self.secret_spinbox.setMinimumWidth(60)
-        set_accessible(self.secret_spinbox, "Secret Room Frequency",
-                      "Percentage of rooms that will be SecretChambers (0-100%)")
-        secret_layout.addWidget(self.secret_spinbox)
-
-        layout.addLayout(secret_layout)
-
         # Connect signals
         self.room_slider.valueChanged.connect(self.room_spinbox.setValue)
         self.room_spinbox.valueChanged.connect(self.room_slider.setValue)
@@ -394,10 +370,6 @@ class LayoutPanel(QWidget):
             lambda v: self.corridor_slider.setValue(v // self.CORRIDOR_WIDTH_STEP)
         )
         self.corridor_slider.valueChanged.connect(self._on_parameter_changed)
-
-        self.secret_slider.valueChanged.connect(self.secret_spinbox.setValue)
-        self.secret_spinbox.valueChanged.connect(self.secret_slider.setValue)
-        self.secret_slider.valueChanged.connect(self._on_parameter_changed)
 
         group.setLayout(layout)
         return group
@@ -608,7 +580,6 @@ class LayoutPanel(QWidget):
         self.floor_spinbox.setValue(1)
         self.auto_connect_floors_check.setChecked(True)
         self.corridor_spinbox.setValue(96)
-        self.secret_spinbox.setValue(0)
         self.export_obj_check.setChecked(False)
         self.export_graph_check.setChecked(False)
         self.fixed_seed_check.setChecked(False)
@@ -635,7 +606,6 @@ class LayoutPanel(QWidget):
             "floor_count": self.floor_spinbox.value(),
             "auto_connect_floors": self.auto_connect_floors_check.isChecked(),
             "corridor_width": self.corridor_spinbox.value(),
-            "secret_room_frequency": self.secret_spinbox.value(),
             "export_obj": self.export_obj_check.isChecked(),
             "export_graph": self.export_graph_check.isChecked(),
             "seed": seed
@@ -657,8 +627,6 @@ class LayoutPanel(QWidget):
             self.auto_connect_floors_check.setChecked(parameters["auto_connect_floors"])
         if "corridor_width" in parameters:
             self.corridor_spinbox.setValue(parameters["corridor_width"])
-        if "secret_room_frequency" in parameters:
-            self.secret_spinbox.setValue(parameters["secret_room_frequency"])
         if "export_obj" in parameters:
             self.export_obj_check.setChecked(parameters["export_obj"])
         if "export_graph" in parameters:
@@ -731,7 +699,7 @@ class LayoutPanel(QWidget):
         params = {}
         for key in ["map_width", "map_height", "room_count", "complexity",
                    "floor_count", "auto_connect_floors",
-                   "corridor_width", "secret_room_frequency",
+                   "corridor_width",
                    "export_obj", "export_graph", "seed"]:
             value = self.settings.value(key)
             if value is not None:

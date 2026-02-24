@@ -30,16 +30,15 @@ from .palette_widget import PRIMITIVE_FOOTPRINTS
 # If height_param_name is None, height is fixed at default_height
 
 PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
-    # === HALLS (6 total) ===
+    # === HALLS (5 total) ===
     # Standard hall height is 128, wall_thickness=16
     'StraightHall': (128.0, 'hall_height', 16.0),
-    'SecretHall': (128.0, 'hall_height', 16.0),
     'TJunction': (128.0, 'hall_height', 16.0),
     'Crossroads': (128.0, 'hall_height', 16.0),
     'SquareCorner': (128.0, 'hall_height', 16.0),
     'VerticalStairHall': (160.0, None, 16.0),  # Connects adjacent floors (height_change=160)
 
-    # === ROOMS (19 total) ===
+    # === ROOMS (23 total) ===
     # Most rooms use height=128 and t=16
     'Sanctuary': (192.0, 'nave_height', 16.0),  # Nave is taller
     'Tomb': (128.0, 'height', 16.0),
@@ -59,7 +58,11 @@ PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
     'Shrine': (128.0, 'height', 16.0),
     'Pit': (128.0, 'height', 16.0),
     'Antechamber': (128.0, 'height', 16.0),
-    'SecretChamber': (128.0, 'height', 16.0),
+    'Gatehouse': (128.0, 'height', 16.0),
+    'Sewer': (128.0, 'height', 16.0),
+    'Ossuary': (128.0, 'height', 16.0),
+    'Cloister': (128.0, 'height', 16.0),
+    'Colosseum': (128.0, 'height', 16.0),
 
     # === MULTI-LEVEL ROOMS (8 total) ===
     'Amphitheater': (192.0, 'height', 16.0),  # Tiered arena, taller for drama

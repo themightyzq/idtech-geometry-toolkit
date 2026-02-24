@@ -1,5 +1,5 @@
 """
-Maze template — complex winding corridors.
+Maze template — dense winding corridors.
 """
 
 from ..base import GenerationTemplate
@@ -7,20 +7,20 @@ from ..base import GenerationTemplate
 
 MAZE_TEMPLATE = GenerationTemplate(
     name="Maze",
-    description="Complex winding corridors for exploration. Many turns and dead ends.",
+    description="Dense winding corridors with many turns and dead ends. Small rooms as rewards for exploration.",
     category="Exploration",
 
     # Layout parameters
-    map_width=50,
-    map_height=50,
-    room_count=20,
-    complexity=8,
+    map_width=45,
+    map_height=45,
+    room_count=12,
+    complexity=3,
     corridor_width=64,
 
     # Generation hints
-    preferred_room_types=['Tower', 'Storage', 'Cistern', 'Armory'],
-    preferred_hall_types=['SquareCorner', 'StraightHall'],
-    room_probability=0.3,
+    preferred_room_types=['Storage', 'Ossuary', 'Tower', 'Shrine', 'Sewer', 'Pit'],
+    preferred_hall_types=['SquareCorner', 'SquareCorner', 'StraightHall', 'StraightHall'],
+    room_probability=0.25,
     min_hall_between_rooms=3,
     allow_dead_ends=True,
 )

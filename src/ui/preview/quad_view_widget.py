@@ -329,7 +329,7 @@ class QuadViewWidget(QWidget):
             fv.layout_changed.connect(self._on_canvas_layout_changed)
 
     def _on_canvas_layout_changed(self):
-        """Handle direct layout changes from canvas (e.g. toggle secret)."""
+        """Handle direct layout changes from canvas."""
         # Update flow views when layout changes
         self._refresh_flow_views()
         self.request_regen()

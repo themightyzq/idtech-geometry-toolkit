@@ -50,12 +50,6 @@ CORRIDOR_CELLS: Dict[str, Set[Tuple[int, int]]] = {
     #   Row 0: [X] [X] <- BOTTOM (SOUTH) portal at z_level=0
     # All cells are corridor (open stairwell)
     'VerticalStairHall': {(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2), (0, 3), (1, 3)},
-
-    # SecretHall: 1x2, same as StraightHall but with CLIP side walls
-    # Portal layout:
-    #   Row 1: [X] <- NORTH portal
-    #   Row 0: [X] <- SOUTH portal
-    'SecretHall': {(0, 0), (0, 1)},
 }
 
 

@@ -35,17 +35,15 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
     # ==========================================================================
     'Sanctuary': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        'sanctuary_type': {
-            'type': 'choice',
-            'choices': ['single_nave', 'basilica', 'cruciform', 'hall_church', 'rotunda']
-        },
+        # sanctuary_type: FORBIDDEN — basilica/cruciform/hall_church add aisles/transepts
+        # that extend geometry beyond the footprint, causing BSP leaks.
+        # apse: FORBIDDEN — extends geometry beyond the back wall boundary.
         # shell_sides: disabled in random layout (polygonal portal issues)
         'pillar_style': {
             'type': 'choice',
             'choices': ['square', 'hexagonal', 'octagonal', 'round']
         },
         'pillar_capital': {'type': 'bool_weighted', 'true_prob': 0.3},
-        'apse': {'type': 'bool_weighted', 'true_prob': 0.6},
     },
 
     'Tomb': {
@@ -154,9 +152,40 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
         # shell_sides: disabled in random layout (polygonal portal issues)
     },
 
-    'SecretChamber': {
+    # ==========================================================================
+    # TEMPLATE-SPECIFIC ROOMS
+    # ==========================================================================
+    'Gatehouse': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'passage_width': {'type': 'float', 'min': 32, 'max': 96},
+    },
+
+    'Sewer': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'channel_depth': {'type': 'float', 'min': 24, 'max': 96},
+        'has_bridge': {'type': 'bool'},
+    },
+
+    'Ossuary': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'niche_count': {'type': 'int', 'min': 2, 'max': 8},
+        'niche_rows': {'type': 'int', 'min': 1, 'max': 3},
+    },
+
+    'Cloister': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'pillar_count': {'type': 'int', 'min': 4, 'max': 16},
+        'pillar_style': {
+            'type': 'choice',
+            'choices': ['square', 'hexagonal', 'octagonal', 'round']
+        },
+        'pillar_capital': {'type': 'bool_weighted', 'true_prob': 0.3},
+    },
+
+    'Colosseum': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'tier_count': {'type': 'int', 'min': 1, 'max': 3},
+        'tier_height': {'type': 'float', 'min': 8, 'max': 32},
     },
 
     # ==========================================================================
@@ -218,10 +247,6 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
     'VerticalStairHall': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
     },
-
-    'SecretHall': {
-        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-    },
 }
 
 # Parameters that must NEVER be randomized (safety check)
@@ -231,6 +256,8 @@ FORBIDDEN_PARAMS = frozenset([
     'wall_thickness',
     'has_entrance', 'has_exit', 'has_side',
     'portal_width', 'portal_height',
+    # Sanctuary: type/apse affect geometry envelope (aisles, transepts, apse extend beyond footprint)
+    'sanctuary_type', 'apse',
 ])
 
 

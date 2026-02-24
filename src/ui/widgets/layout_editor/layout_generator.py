@@ -146,12 +146,18 @@ class TagRegistry:
 ROOM_PRIMITIVES_WITH_ENTRANCE = {
     'Tower', 'Storage', 'Prison',
     'Sanctuary', 'Tomb', 'Chamber', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
-    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'SecretChamber',
+    'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit',
+    'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
 }
 
 # Multi-portal rooms that handle alignment via offset parameters instead of systemic correction.
 # These rooms have portals on different walls, so a single whole-room shift can't align all portals.
-MULTI_PORTAL_ROOMS = {'GreatHall', 'Antechamber'}
+# Includes multi-floor rooms which have entrance (SOUTH) + upper (NORTH) portals.
+MULTI_PORTAL_ROOMS = {
+    'GreatHall', 'Antechamber',
+    'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
+    'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
+}
 
 # Multi-floor rooms - these have entrance at z_level=0 and upper portal at z_level=160.
 # They function as vertical connectors, allowing halls on different floors to connect through them.
@@ -166,7 +172,7 @@ ROOM_PRIMITIVES: Set[str] = {
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
     'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
-    'SecretChamber',
+    'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
     # Multi-Floor Rooms (rooms with internal upper portals and stairs)
     'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
     'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
@@ -574,23 +580,22 @@ class LayoutGenerator:
 
         return (-center_x, -center_y)
 
-    def _build_portal_connections(self) -> Dict[str, Dict[str, Tuple[bool, bool]]]:
+    def _build_portal_connections(self) -> Dict[str, Dict[str, bool]]:
         """
-        Build a map of primitive_id -> portal_id -> (is_connected, is_secret).
+        Build a map of primitive_id -> portal_id -> is_connected.
 
         Used to configure portal_* parameters on primitives.
-        Returns tuple of (is_connected, is_secret) for each portal.
         """
-        result: Dict[str, Dict[str, Tuple[bool, bool]]] = {}
+        result: Dict[str, Dict[str, bool]] = {}
 
         for prim_id in self._layout.primitives:
             result[prim_id] = {}
 
         for conn in self._layout.connections:
             if conn.primitive_a_id in result:
-                result[conn.primitive_a_id][conn.portal_a_id] = (True, conn.is_secret)
+                result[conn.primitive_a_id][conn.portal_a_id] = True
             if conn.primitive_b_id in result:
-                result[conn.primitive_b_id][conn.portal_b_id] = (True, conn.is_secret)
+                result[conn.primitive_b_id][conn.portal_b_id] = True
 
         return result
 
@@ -979,34 +984,47 @@ class LayoutGenerator:
             # This matches the z_level=160 on the top portal
             set_if_not_user('height_change', 160.0)
 
-        elif ptype == 'SecretHall':
-            # SecretHall: Same dimensions as StraightHall
-            # 1xN footprint, CLIP-textured side walls for walk-through
-            t = params.get('wall_thickness', 16)
-            set_if_not_user('hall_width', grid_size - 2*t)  # Same as StraightHall
-            set_if_not_user('length', fp_depth * grid_size - 2*t)
-
         # === ROOM PRIMITIVES ===
         # Room dimensions must match footprint so geometry aligns with grid
 
         elif ptype == 'Sanctuary':
             # Sanctuary (formerly Chapel): nave_width is full width, nave_length is depth
             # Footprint: 3x4 cells = 384 x 512 units
-            # Force single_nave type to avoid aisles/transepts extending beyond footprint
             # Room t=16: full width = footprint - 2*t
-            set_if_not_user('sanctuary_type', 'single_nave')
-            set_if_not_user('apse', False)  # Disable apse to keep geometry simple
+            #
+            # FORCE single_nave and apse=False:
+            # Other types (basilica, cruciform, hall_church) add aisles/transepts
+            # that extend geometry beyond the footprint boundary, causing BSP leaks.
+            # Apse extends geometry beyond the back wall. These MUST be forced
+            # (not set_if_not_user) because the parameter randomizer may set them.
+            params['sanctuary_type'] = 'single_nave'
+            params['apse'] = False
             set_if_not_user('nave_width', fp_width * grid_size - 32)  # Subtract for walls (2*t)
             set_if_not_user('nave_length', fp_depth * grid_size - 32)
+            # Sanctuary default nave_height (192) exceeds hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('nave_height', 128)
 
         elif ptype == 'Tomb':
             # Tomb (formerly Crypt): width is FULL width (not half), length is depth
             # Footprint: 3x3 cells = 384 x 384 units
-            # Disable alcoves to keep geometry within footprint
             # Room t=16: full width = footprint - 2*t
-            set_if_not_user('alcove_count', 0)
+            #
+            # FORCE alcove_count=0 and coffin_layout='rows':
+            # The 'alcoves' coffin_layout skips solid side walls and extends
+            # floor/ceiling by alcove_depth (48u) beyond the footprint boundary,
+            # causing BSP leaks at module connections. These params MUST be
+            # forced (not set_if_not_user) because the random layout generator
+            # may set coffin_layout='alcoves' in the primitive's parameters.
+            params['alcove_count'] = 0
+            params['coffin_layout'] = 'rows'
             set_if_not_user('width', fp_width * grid_size - 32)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Tomb default height (96) is shorter than hall_height (128).
+            # At portal boundaries, this creates a gap between the Tomb ceiling
+            # and the hall ceiling, causing BSP leaks. Force tomb_height to 128
+            # to match hall height in layout mode.
+            set_if_not_user('tomb_height', 128)
 
         elif ptype == 'Tower':
             # Tower: uses tower_radius (octagonal approximation)
@@ -1014,6 +1032,9 @@ class LayoutGenerator:
             # Room t=16: radius = footprint/2 - t
             # Radius should fit within the footprint, so use half the smaller dimension
             set_if_not_user('tower_radius', min(fp_width, fp_depth) * grid_size / 2 - 16)
+            # Tower default tower_height (384) exceeds hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('tower_height', 128)
             # Portal alignment handled by systemic post-rotation correction
 
         elif ptype == 'Chamber':
@@ -1045,6 +1066,9 @@ class LayoutGenerator:
             set_if_not_user('width', hw)
             set_if_not_user('length', nl)
             set_if_not_user('random_seed', 1)  # Fixed seed to disable random variance
+            # GreatHall default height (192) exceeds hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('height', 128)
 
             # MULTI-PORTAL ROOM: GreatHall has entrance (SOUTH) + side (EAST) portals.
             # We can't use systemic correction (whole-room shift) because the portals
@@ -1119,6 +1143,9 @@ class LayoutGenerator:
             set_if_not_user('cell_depth', 0)
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Prison default height (96) is shorter than hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('height', 128)
             # Portal alignment handled by systemic post-rotation correction
 
         elif ptype == 'Armory':
@@ -1143,6 +1170,9 @@ class LayoutGenerator:
             t = 32  # Stronghold uses extra thick walls for defense
             set_if_not_user('width', (fp_width * grid_size) / 2 - t)   # = 640/2 - 32 = 288
             set_if_not_user('length', fp_depth * grid_size - 2*t)      # = 640 - 64 = 576
+            # Stronghold default (3 levels * 128 = 384) exceeds hall_height (128).
+            # Force to 1 level to prevent BSP leaks at portal boundaries.
+            set_if_not_user('levels', 1)
             # Portal is at center (cell 2,0 = footprint center), systemic correction works
 
         elif ptype == 'Courtyard':
@@ -1152,6 +1182,9 @@ class LayoutGenerator:
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
             set_if_not_user('corner_towers', False)
+            # Courtyard default height (192) exceeds hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('height', 128)
 
         # === NEW ROOM PRIMITIVES ===
 
@@ -1200,22 +1233,124 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Pit default height (96) is shorter than hall_height (128).
+            # Force to 128 to prevent BSP leaks at portal boundaries.
+            set_if_not_user('height', 128)
+
+        elif ptype == 'Gatehouse':
+            # Gatehouse: fortified chokepoint room
+            # Footprint: 3x3 cells
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'Sewer':
+            # Sewer: bifurcated passage with central channel
+            # Footprint: 3x3 cells
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'Ossuary':
+            # Ossuary: narrow passage with wall niches
+            # Footprint: 2x3 cells
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+
+        elif ptype == 'Cloister':
+            # Cloister: perimeter arcade with pillar ring
+            # Footprint: 3x3 cells
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            # Disable sunken center in layout mode — extends below floor
+            set_if_not_user('sunken_depth', 0)
+
+        elif ptype == 'Colosseum':
+            # Colosseum: tiered arena room
+            # Footprint: 4x4 cells
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
 
         elif ptype == 'Antechamber':
             # Antechamber: transitional hub with multiple portals
             # Footprint: 2x2 cells = 256 x 256 units
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
-            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
-            set_if_not_user('length', fp_depth * grid_size - 32)
+            t = 16
+            hw = (fp_width * grid_size) / 2 - t
+            nl = fp_depth * grid_size - 2 * t
+            set_if_not_user('width', hw)
+            set_if_not_user('length', nl)
             set_if_not_user('has_pillars', False)  # Disable pillars in layout mode
             set_if_not_user('central_well', False)
 
-        elif ptype == 'SecretChamber':
-            # SecretChamber: sealed room with CLIP texture wall for secrets
-            # Footprint: 3x3 cells = 384 x 384 units
-            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
-            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
-            set_if_not_user('length', fp_depth * grid_size - 32)
+            # MULTI-PORTAL ROOM: Antechamber has entrance (SOUTH), exit (NORTH),
+            # side_east (EAST), and side_west (WEST) portals.
+            # Compute offsets for each portal axis (same approach as GreatHall).
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            # ENTRANCE PORTAL: on SOUTH wall, varies along X
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            # EXIT PORTAL: on NORTH wall, varies along X (same axis as entrance)
+            exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
+            if exit_portal:
+                rotated_cell = exit_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = exit_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_exit_x_offset'] = target_y - norm_center_y
+
+            # SIDE PORTALS: on EAST/WEST walls, vary along Y
+            # Both side_east and side_west are at the same Y cell row,
+            # so they share _side_y_offset.
+            side_portal = next((p for p in footprint.portals if p.id == 'side_east'), None)
+            if side_portal:
+                rotated_cell = side_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = side_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_portal_y = nl / 2 + t
+                    offset = target_y - norm_portal_y
+                    params['_side_y_offset'] = offset
+                else:
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center = (fp_d * grid_size) / 2
+                    if prim.rotation == 90:
+                        params['_side_y_offset'] = norm_center - target_x - (nl / 2)
+                    else:  # rotation == 270
+                        params['_side_y_offset'] = target_x - (nl / 2 + t)
 
         # === MULTI-FLOOR ROOM PRIMITIVES ===
         # These rooms have internal upper portals and stairs for vertical gameplay
@@ -1228,6 +1363,8 @@ class LayoutGenerator:
             set_if_not_user('length', fp_depth * grid_size - 32)
             set_if_not_user('tier_count', 3)
             set_if_not_user('shell_sides', 4)  # Square for layout mode
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
 
         elif ptype == 'CatwalkChamber':
             # CatwalkChamber: pit with spanning catwalks
@@ -1235,6 +1372,8 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
 
         elif ptype == 'BalconyRoom':
             # BalconyRoom: room with elevated balcony
@@ -1242,6 +1381,8 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
 
         elif ptype == 'SunkenChamber':
             # SunkenChamber: room with lowered central basin
@@ -1249,6 +1390,8 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
 
         elif ptype == 'LibraryArchive':
             # LibraryArchive: tall room with shelf alcoves
@@ -1256,16 +1399,33 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
-            # Note: alcoves kept at default (alcove_rows cannot be 0 to avoid division by zero)
+            # Disable alcove depth in layout mode: alcoves extend geometry
+            # by alcove_depth (24) beyond walls on each side, overflowing the footprint.
+            # Setting depth=0 keeps alcove_rows/cols for wall segment logic but
+            # prevents geometry from extending outside the room envelope.
+            set_if_not_user('alcove_depth', 0)
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('room_height', 128)
 
         elif ptype == 'Grotto':
             # Grotto: irregular cave with varied floor
             # Footprint: 3x3 cells = 384 x 384 units
-            # Room t=24 (thicker walls): width = footprint/2 - t, length = footprint - 2*t
-            t = 24  # Grotto uses extra thick walls
+            # IMPORTANT: Grotto.WALL_THICKNESS = 24 (class constant, NOT settable via params).
+            # Dimension calculations MUST use t=24 to match what generate() actually uses,
+            # otherwise floor/ceiling extend 8 units beyond footprint per side.
+            t = 24  # Must match Grotto.WALL_THICKNESS
             set_if_not_user('width', (fp_width * grid_size) / 2 - t)
             set_if_not_user('length', fp_depth * grid_size - 2*t)
             set_if_not_user('shell_sides', 4)  # Square for layout mode
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
+            # Disable features that extend geometry beyond the expected Z envelope:
+            # - floor_variation pushes floor below z=0 (walls extend to oz - floor_var)
+            # - stalactites hang from ceiling into room space
+            # - irregularity offsets walls inward, creating gaps between segments
+            set_if_not_user('floor_variation', 0)
+            set_if_not_user('stalactite_count', 0)
+            set_if_not_user('irregularity', 0)
 
         elif ptype == 'RadialShrine':
             # RadialShrine: shrine with radiating alcoves
@@ -1275,6 +1435,8 @@ class LayoutGenerator:
             set_if_not_user('length', fp_depth * grid_size - 32)
             set_if_not_user('alcove_count', 0)  # Disable radiating alcoves in layout mode
             set_if_not_user('shell_sides', 4)  # Square for layout mode
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
 
         elif ptype == 'Forge':
             # Forge: multi-tier industrial room
@@ -1283,6 +1445,43 @@ class LayoutGenerator:
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
             set_if_not_user('tier_count', 2)
+            # Force height to 128 at entrance level to match hall_height
+            set_if_not_user('height', 128)
+
+        # =====================================================================
+        # MULTI-FLOOR ROOM PORTAL OFFSET COMPUTATION
+        # =====================================================================
+        # Multi-floor rooms have entrance (SOUTH) + upper (NORTH) portals on
+        # different walls. Like GreatHall/Antechamber, they need per-portal
+        # offsets instead of systemic whole-room correction.
+        if ptype in MULTI_FLOOR_ROOMS and footprint:
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            # ENTRANCE PORTAL: on SOUTH wall, varies along X
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            # UPPER PORTAL: on NORTH wall, varies along X
+            # Upper portal uses the same _entrance_x_offset since both portals
+            # are at local X=0 (room center). The layout generator's tag system
+            # places tags from footprint data, so we don't need a separate offset.
 
         # =====================================================================
         # POLYGONAL ROOM PORTAL TARGET COMPUTATION
@@ -1402,7 +1601,6 @@ class LayoutGenerator:
             },
             'SquareCorner': {'a': 'portal_a', 'b': 'portal_b'},
             'VerticalStairHall': {'bottom': 'portal_bottom', 'top': 'portal_top'},
-            'SecretHall': {'front': 'portal_back', 'back': 'portal_front'},
             # === ROOMS (all use has_entrance, some have additional portals) ===
             'Sanctuary': {'entrance': 'has_entrance'},
             'Tomb': {'entrance': 'has_entrance', 'exit': 'has_exit'},
@@ -1422,11 +1620,15 @@ class LayoutGenerator:
             'Barracks': {'entrance': 'has_entrance'},
             'Shrine': {'entrance': 'has_entrance'},
             'Pit': {'entrance': 'has_entrance'},
+            'Gatehouse': {'entrance': 'has_entrance'},
+            'Sewer': {'entrance': 'has_entrance'},
+            'Ossuary': {'entrance': 'has_entrance'},
+            'Cloister': {'entrance': 'has_entrance'},
+            'Colosseum': {'entrance': 'has_entrance'},
             'Antechamber': {
                 'entrance': 'has_entrance', 'exit': 'has_exit',
                 'side_east': 'has_side_east', 'side_west': 'has_side_west'
             },
-            'SecretChamber': {'entrance': 'has_entrance'},
             # Multi-Floor rooms (entrance at z=0, upper portal at z=160 for floor connections)
             'Amphitheater': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
             'CatwalkChamber': {'entrance': 'has_entrance', 'upper': 'has_upper_portal'},
@@ -1446,17 +1648,15 @@ class LayoutGenerator:
                 # Portal is explicitly disabled via override
                 params[param_name] = False
             else:
-                # Get connection info: (is_connected, is_secret)
-                connection_info = connected_portals.get(portal_id, (False, False))
-                is_connected, is_secret = connection_info
+                is_connected = connected_portals.get(portal_id, False)
                 params[param_name] = is_connected
-                # Store secret flag for this portal if it's a secret connection
-                if is_secret:
-                    params[f'_portal_{portal_id}_is_secret'] = True
 
     def _create_box_brush(self, x1: float, y1: float, z1: float,
                           x2: float, y2: float, z2: float) -> Brush:
         """Create a simple axis-aligned box brush.
+
+        Uses the same inward-facing normal convention as base.py's _box() method
+        for consistency with module-generated brushes.
 
         Args:
             x1, y1, z1: Minimum corner coordinates
@@ -1469,20 +1669,23 @@ class LayoutGenerator:
         x1, y1, z1 = int(x1), int(y1), int(z1)
         x2, y2, z2 = int(x2), int(y2), int(z2)
 
-        # Create 6 planes defining the box
+        # Normalize: ensure min <= max
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+        if z1 > z2:
+            z1, z2 = z2, z1
+
+        # idTech 1 convention: normals point inward (toward brush center)
+        # Matches base.py _box() winding order exactly
         planes = [
-            # Bottom face (Z = z1), normal pointing down
-            Plane((x1, y2, z1), (x2, y2, z1), (x2, y1, z1)),
-            # Top face (Z = z2), normal pointing up
-            Plane((x1, y1, z2), (x2, y1, z2), (x2, y2, z2)),
-            # Front face (Y = y1), normal pointing -Y
-            Plane((x1, y1, z1), (x2, y1, z1), (x2, y1, z2)),
-            # Back face (Y = y2), normal pointing +Y
-            Plane((x2, y2, z1), (x1, y2, z1), (x1, y2, z2)),
-            # Left face (X = x1), normal pointing -X
-            Plane((x1, y2, z1), (x1, y1, z1), (x1, y1, z2)),
-            # Right face (X = x2), normal pointing +X
-            Plane((x2, y1, z1), (x2, y2, z1), (x2, y2, z2)),
+            Plane((x1, y1, z1), (x1, y2, z1), (x1, y1, z2)),  # Left (X=x1)
+            Plane((x2, y1, z1), (x2, y1, z2), (x2, y2, z1)),  # Right (X=x2)
+            Plane((x1, y1, z1), (x1, y1, z2), (x2, y1, z1)),  # Front (Y=y1)
+            Plane((x1, y2, z1), (x2, y2, z1), (x1, y2, z2)),  # Back (Y=y2)
+            Plane((x1, y1, z1), (x2, y1, z1), (x1, y2, z1)),  # Bottom (Z=z1)
+            Plane((x1, y1, z2), (x1, y2, z2), (x2, y1, z2)),  # Top (Z=z2)
         ]
         return Brush(planes)
 

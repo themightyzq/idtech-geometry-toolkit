@@ -147,14 +147,6 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
             Portal(id='back', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
         ]
     ),
-    'SecretHall': PrimitiveFootprint(
-        width_cells=1,
-        depth_cells=2,
-        portals=[
-            Portal(id='front', direction=PortalDirection.NORTH, cell_offset=CellCoord(0, 1)),
-            Portal(id='back', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
-        ]
-    ),
     'TJunction': PrimitiveFootprint(
         width_cells=3,
         depth_cells=2,
@@ -339,14 +331,44 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
             Portal(id='side_west', direction=PortalDirection.WEST, cell_offset=CellCoord(0, 0)),
         ]
     ),
-    'SecretChamber': PrimitiveFootprint(
+    # ==========================================================================
+    # TEMPLATE-SPECIFIC ROOMS - Unique navigation patterns per template
+    # ==========================================================================
+    'Gatehouse': PrimitiveFootprint(
         width_cells=3,
         depth_cells=3,
         portals=[
             Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
         ]
     ),
-
+    'Sewer': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
+    'Ossuary': PrimitiveFootprint(
+        width_cells=2,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
+        ]
+    ),
+    'Cloister': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
+    'Colosseum': PrimitiveFootprint(
+        width_cells=4,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
     # ==========================================================================
     # MULTI-FLOOR ROOMS - Rooms designed to connect multiple floor levels
     # These rooms have an entrance at z_level=0 and an upper portal at z_level=160
@@ -488,14 +510,14 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
 # Only include primitives that can be connected via portals
 PRIMITIVE_CATEGORIES = {
     'Halls': [
-        'StraightHall', 'SquareCorner', 'TJunction', 'Crossroads', 'SecretHall',
+        'StraightHall', 'SquareCorner', 'TJunction', 'Crossroads',
     ],
     'Rooms': [
-        # 19 existing rooms - now with optional upper portal support
+        # 23 rooms - now with optional upper portal support
         'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
         'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
         'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
-        'SecretChamber',
+        'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
     ],
     'Multi-Floor Rooms': [
         # 8 rooms designed for vertical gameplay with upper portals

@@ -40,7 +40,7 @@ class GridCanvas(QGraphicsView):
     primitive_deleted = pyqtSignal(str)  # Emitted with primitive ID when deleted
     status_message = pyqtSignal(str)  # Emitted with status messages for user feedback
     mode_changed = pyqtSignal(bool, str)  # Emitted when mode changes (is_placing, primitive_type)
-    layout_changed = pyqtSignal()  # Emitted when layout is modified directly (e.g. toggle secret)
+    layout_changed = pyqtSignal()  # Emitted when layout is modified directly
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -462,13 +462,11 @@ class GridCanvas(QGraphicsView):
         """Draw connection lines between connected portals.
 
         Color-codes connections based on type:
-        - Red dashed: Secret connections (CLIP wall)
         - Blue: Horizontal same-level connections
         - Purple: Vertical connections (via VerticalStairHall)
         - Orange: Mismatched Z-level connections (potential issues)
         """
         # Define connection type colors
-        CONN_SECRET = QColor(220, 20, 60, 220)        # Crimson red for secrets
         CONN_HORIZONTAL = QColor(33, 150, 243, 180)   # Blue
         CONN_VERTICAL = QColor(156, 39, 176, 180)     # Purple
         CONN_MISMATCH = QColor(255, 152, 0, 200)      # Orange (warning)
@@ -480,31 +478,26 @@ class GridCanvas(QGraphicsView):
             if not prim_a or not prim_b:
                 continue
 
-            # Secret connections always use red color
-            if conn.is_secret:
-                color = CONN_SECRET
-                conn_pen = QPen(color, 3, Qt.DashDotLine)  # Thicker dash-dot for secrets
+            # Determine connection type based on Z-offsets
+            z_diff = abs(prim_a.z_offset - prim_b.z_offset)
+
+            # Check if either primitive is a VerticalStairHall (proper vertical connector)
+            is_vertical_stair = (
+                prim_a.primitive_type == 'VerticalStairHall' or
+                prim_b.primitive_type == 'VerticalStairHall'
+            )
+
+            if z_diff < 2:
+                # Same level - blue
+                color = CONN_HORIZONTAL
+            elif is_vertical_stair:
+                # Proper vertical connection via stair hall - purple
+                color = CONN_VERTICAL
             else:
-                # Determine connection type based on Z-offsets
-                z_diff = abs(prim_a.z_offset - prim_b.z_offset)
+                # Z-level mismatch without proper connector - orange warning
+                color = CONN_MISMATCH
 
-                # Check if either primitive is a VerticalStairHall (proper vertical connector)
-                is_vertical_stair = (
-                    prim_a.primitive_type == 'VerticalStairHall' or
-                    prim_b.primitive_type == 'VerticalStairHall'
-                )
-
-                if z_diff < 2:
-                    # Same level - blue
-                    color = CONN_HORIZONTAL
-                elif is_vertical_stair:
-                    # Proper vertical connection via stair hall - purple
-                    color = CONN_VERTICAL
-                else:
-                    # Z-level mismatch without proper connector - orange warning
-                    color = CONN_MISMATCH
-
-                conn_pen = QPen(color, 2, Qt.DashLine)
+            conn_pen = QPen(color, 2, Qt.DashLine)
 
             painter.setPen(conn_pen)
 
@@ -1379,40 +1372,5 @@ class GridCanvas(QGraphicsView):
     def _show_connection_context_menu(self, global_pos, conn):
         """Show context menu for a connection."""
         menu = QMenu(self)
-
-        # Toggle secret action
-        if conn.is_secret:
-            action_text = "Remove Secret (Open Portal)"
-        else:
-            action_text = "Make Secret (CLIP Wall)"
-
-        toggle_action = QAction(action_text, self)
-        toggle_action.triggered.connect(lambda: self._toggle_connection_secret(conn))
-        menu.addAction(toggle_action)
-
+        # Currently no connection-specific actions
         menu.exec_(global_pos)
-
-    def _toggle_connection_secret(self, conn):
-        """Toggle the is_secret flag on a connection."""
-        # Find and update the connection in the layout
-        for i, c in enumerate(self._layout.connections):
-            if (c.primitive_a_id == conn.primitive_a_id and
-                c.portal_a_id == conn.portal_a_id and
-                c.primitive_b_id == conn.primitive_b_id and
-                c.portal_b_id == conn.portal_b_id):
-                # Create new connection with toggled secret flag
-                from .data_model import Connection
-                new_conn = Connection(
-                    primitive_a_id=c.primitive_a_id,
-                    portal_a_id=c.portal_a_id,
-                    primitive_b_id=c.primitive_b_id,
-                    portal_b_id=c.portal_b_id,
-                    is_secret=not c.is_secret
-                )
-                self._layout.connections[i] = new_conn
-                break
-
-        # Emit layout changed signal
-        self.layout_changed.emit()
-        # Trigger repaint
-        self.viewport().update()

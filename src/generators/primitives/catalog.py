@@ -13,11 +13,12 @@ from .base import GeometricPrimitive
 from .structural import StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement
 from .rooms import (
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
-    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber,
-    Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge
+    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
+    Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,
+    Gatehouse, Sewer, Ossuary, Cloister, Colosseum
 )
 from .connective import Bridge, Platform, Rampart, Gallery
-from .halls import StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, SecretHall
+from .halls import StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +126,10 @@ PRIMITIVE_CATALOG = PrimitiveCatalog()
 for _cls in [
     StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement,
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
-    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber,
+    Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
     Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,
+    Gatehouse, Sewer, Ossuary, Cloister, Colosseum,
     Bridge, Platform, Rampart, Gallery,
-    StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, SecretHall,
+    StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall,
 ]:
     PRIMITIVE_CATALOG.register(_cls)

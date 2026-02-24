@@ -423,14 +423,11 @@ class Connection:
     """Connection between two portals.
 
     A connection links two portals on different primitives.
-    When is_secret is True, the connection generates a CLIP wall
-    instead of an open portal (walk-through secret passage).
     """
     primitive_a_id: str
     portal_a_id: str
     primitive_b_id: str
     portal_b_id: str
-    is_secret: bool = False  # When True, generates CLIP wall instead of open portal
 
 
 @dataclass
@@ -609,7 +606,6 @@ class DungeonLayout:
                     'portal_a_id': c.portal_a_id,
                     'primitive_b_id': c.primitive_b_id,
                     'portal_b_id': c.portal_b_id,
-                    'is_secret': c.is_secret,
                 }
                 for c in self.connections
             ],
@@ -650,12 +646,12 @@ class DungeonLayout:
             layout.primitives[pid] = prim
 
         for cdata in data.get('connections', []):
+            # Note: is_secret field silently ignored for backward compatibility
             layout.connections.append(Connection(
                 primitive_a_id=cdata['primitive_a_id'],
                 portal_a_id=cdata['portal_a_id'],
                 primitive_b_id=cdata['primitive_b_id'],
                 portal_b_id=cdata['portal_b_id'],
-                is_secret=cdata.get('is_secret', False),  # Default False for backward compat
             ))
 
         return layout

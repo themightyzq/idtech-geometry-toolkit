@@ -40,7 +40,6 @@ _CATEGORY_COLORS = {
 }
 
 # Connection type colors — must match grid_canvas.py
-CONN_SECRET = QColor(220, 20, 60, 220)        # Crimson red
 CONN_HORIZONTAL = QColor(33, 150, 243, 180)   # Blue
 CONN_VERTICAL = QColor(156, 39, 176, 180)     # Purple
 CONN_MISMATCH = QColor(255, 152, 0, 200)      # Orange
@@ -78,13 +77,16 @@ def _get_color(primitive_type: str) -> QColor:
 _MODULE_DEFAULT_HEIGHTS = {
     # Halls — all 128
     'StraightHall': 128, 'TJunction': 128, 'Crossroads': 128,
-    'SquareCorner': 128, 'VerticalStairHall': 128, 'SecretHall': 128,
+    'SquareCorner': 128, 'VerticalStairHall': 128,
     # Standard rooms
     'Sanctuary': 192, 'Tomb': 96, 'Tower': 384, 'Chamber': 128,
     'Storage': 112, 'GreatHall': 192, 'Prison': 96, 'Armory': 128,
     'Cistern': 128, 'Stronghold': 384, 'Courtyard': 192, 'Arena': 128,
     'Laboratory': 128, 'Vault': 112, 'Barracks': 112, 'Shrine': 112,
-    'Pit': 96, 'Antechamber': 112, 'SecretChamber': 128,
+    'Pit': 96, 'Antechamber': 112,
+    # Template-specific rooms
+    'Gatehouse': 128, 'Sewer': 128, 'Ossuary': 128,
+    'Cloister': 128, 'Colosseum': 128,
     # Multi-floor rooms
     'Amphitheater': 192, 'CatwalkChamber': 160, 'BalconyRoom': 160,
     'SunkenChamber': 128, 'LibraryArchive': 320, 'Grotto': 160,
@@ -108,7 +110,7 @@ _DEFAULT_MODULE_HEIGHT = 128
 
 _HALL_TYPES = frozenset((
     'StraightHall', 'TJunction', 'Crossroads',
-    'SquareCorner', 'VerticalStairHall', 'SecretHall',
+    'SquareCorner', 'VerticalStairHall',
 ))
 
 
@@ -167,7 +169,7 @@ class LayoutFlowView(QWidget):
     primitive_selected = pyqtSignal(str)  # primitive_id
     selection_cleared = pyqtSignal()
     command_requested = pyqtSignal(object)  # Command (SetZOffsetCommand or MovePrimitiveCommand)
-    layout_changed = pyqtSignal()  # Emitted when layout is modified (e.g. toggle secret)
+    layout_changed = pyqtSignal()  # Emitted when layout is modified
 
     def __init__(self, axis: FlowViewAxis, parent=None):
         super().__init__(parent)
@@ -571,7 +573,6 @@ class LayoutFlowView(QWidget):
         """Draw connection lines between portals.
 
         Color-codes connections to match GridCanvas:
-        - Red dash-dot: Secret connections (CLIP wall)
         - Blue dashed: Horizontal same-level connections
         - Purple dashed: Vertical connections (via VerticalStairHall)
         - Orange dashed: Mismatched Z-level connections (warning)
@@ -594,30 +595,26 @@ class LayoutFlowView(QWidget):
                 continue
 
             # Determine connection color — same logic as grid_canvas.py
-            if conn.is_secret:
-                color = CONN_SECRET
-                conn_pen = QPen(color, 3, Qt.DashDotLine)
+            # Use actual portal Z positions, not primitive z_offsets
+            z_a = prim_a.get_absolute_portal_z(conn.portal_a_id)
+            z_b = prim_b.get_absolute_portal_z(conn.portal_b_id)
+            z_diff = abs(z_a - z_b)
+
+            is_vertical_connector = (
+                prim_a.primitive_type == 'VerticalStairHall' or
+                prim_b.primitive_type == 'VerticalStairHall' or
+                any(p.z_level > 0 for p in prim_a.get_portals()) or
+                any(p.z_level > 0 for p in prim_b.get_portals())
+            )
+
+            if z_diff < 2:
+                color = CONN_HORIZONTAL
+            elif is_vertical_connector:
+                color = CONN_VERTICAL
             else:
-                # Use actual portal Z positions, not primitive z_offsets
-                z_a = prim_a.get_absolute_portal_z(conn.portal_a_id)
-                z_b = prim_b.get_absolute_portal_z(conn.portal_b_id)
-                z_diff = abs(z_a - z_b)
+                color = CONN_MISMATCH
 
-                is_vertical_connector = (
-                    prim_a.primitive_type == 'VerticalStairHall' or
-                    prim_b.primitive_type == 'VerticalStairHall' or
-                    any(p.z_level > 0 for p in prim_a.get_portals()) or
-                    any(p.z_level > 0 for p in prim_b.get_portals())
-                )
-
-                if z_diff < 2:
-                    color = CONN_HORIZONTAL
-                elif is_vertical_connector:
-                    color = CONN_VERTICAL
-                else:
-                    color = CONN_MISMATCH
-
-                conn_pen = QPen(color, 2, Qt.DashLine)
+            conn_pen = QPen(color, 2, Qt.DashLine)
 
             painter.setPen(conn_pen)
             painter.drawLine(pos_a, pos_b)
@@ -1125,42 +1122,8 @@ class LayoutFlowView(QWidget):
     def _show_connection_context_menu(self, global_pos, conn):
         """Show context menu for a connection."""
         menu = QMenu(self)
-
-        if conn.is_secret:
-            action_text = "Remove Secret (Open Portal)"
-        else:
-            action_text = "Make Secret (CLIP Wall)"
-
-        toggle_action = QAction(action_text, self)
-        toggle_action.triggered.connect(lambda: self._toggle_connection_secret(conn))
-        menu.addAction(toggle_action)
-
+        # Currently no connection-specific actions
         menu.exec_(global_pos)
-
-    def _toggle_connection_secret(self, conn):
-        """Toggle the is_secret flag on a connection."""
-        if not self._layout:
-            return
-
-        from quake_levelgenerator.src.ui.widgets.layout_editor.data_model import Connection
-
-        for i, c in enumerate(self._layout.connections):
-            if (c.primitive_a_id == conn.primitive_a_id and
-                c.portal_a_id == conn.portal_a_id and
-                c.primitive_b_id == conn.primitive_b_id and
-                c.portal_b_id == conn.portal_b_id):
-                new_conn = Connection(
-                    primitive_a_id=c.primitive_a_id,
-                    portal_a_id=c.portal_a_id,
-                    primitive_b_id=c.primitive_b_id,
-                    portal_b_id=c.portal_b_id,
-                    is_secret=not c.is_secret
-                )
-                self._layout.connections[i] = new_conn
-                break
-
-        self.layout_changed.emit()
-        self.update()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_F:

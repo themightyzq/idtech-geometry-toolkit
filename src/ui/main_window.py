@@ -1484,6 +1484,7 @@ class MainWindow(QMainWindow):
             # Check if multi-floor generation is requested
             floor_count = params.get('floor_count', 1)
             auto_connect = params.get('auto_connect_floors', True)
+            hints = self.layout_panel.get_generation_hints()
 
             if floor_count > 1:
                 # Multi-floor generation
@@ -1496,7 +1497,11 @@ class MainWindow(QMainWindow):
                     seed=params.get('seed'),
                     complexity=params['complexity'],
                     auto_connect_floors=auto_connect,
-                    secret_room_frequency=params.get('secret_room_frequency', 0),
+                    preferred_room_types=hints.get('preferred_room_types'),
+                    preferred_hall_types=hints.get('preferred_hall_types'),
+                    room_probability=hints.get('room_probability', 0.4),
+                    min_hall_between_rooms=hints.get('min_hall_between_rooms', 1),
+                    allow_dead_ends=hints.get('allow_dead_ends', True),
                 )
             else:
                 # Single floor generation (original behavior)
@@ -1506,7 +1511,11 @@ class MainWindow(QMainWindow):
                     map_height=params['map_height'],
                     seed=params.get('seed'),
                     complexity=params['complexity'],
-                    secret_room_frequency=params.get('secret_room_frequency', 0),
+                    preferred_room_types=hints.get('preferred_room_types'),
+                    preferred_hall_types=hints.get('preferred_hall_types'),
+                    room_probability=hints.get('room_probability', 0.4),
+                    min_hall_between_rooms=hints.get('min_hall_between_rooms', 1),
+                    allow_dead_ends=hints.get('allow_dead_ends', True),
                 )
 
             # Load the layout into the editor

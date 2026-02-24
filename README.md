@@ -6,16 +6,15 @@ A PyQt5 desktop application for generating brush geometry for idTech engines (Qu
 
 ## Features
 
-- **43 Geometric Modules** — Rooms, halls, multi-floor rooms, arches, staircases, pillars, and more
+- **48 Geometric Modules** — Rooms, halls, multi-floor rooms, arches, staircases, pillars, and more
 - **BSP-Based Dungeon Generation** — Random layouts with guaranteed connectivity
 - **Layout Editor** — 2D grid placement with drag-and-drop, portal auto-connect, and snap-to-portal
 - **Quad View** — 4-pane layout (Top/Front/Side/3D) with orthographic Z-height visualization
 - **Flow Views** — Front (XZ) and Side (YZ) schematics showing module positions and portal Z-levels
 - **Real-Time 3D Preview** — FPS-style camera with textured rendering and 5 render modes
 - **Multi-Floor Support** — Vertical dungeons with stair connections and 8 multi-floor room types
-- **Generation Templates** — Arena, Maze, Fortress, Cathedral presets
+- **Generation Templates** — Arena, Maze, Fortress, Cathedral, Crypt, Dungeon presets with signature rooms
 - **5 Texture Themes** — Base, Medieval, Tech, Gothic, Runic
-- **Secret Areas** — Walk-through CLIP walls and hidden chambers
 - **Polygonal Rooms** — 3 to 16-sided room shapes
 
 ## Export Formats
@@ -76,7 +75,6 @@ python3 main.py
    - Click modules in the palette to place on the 2D grid
    - Drag to reposition, press R to rotate
    - Portals auto-connect when adjacent modules face each other
-   - Right-click connections to toggle secret passages (CLIP walls)
    - Use Quad View (Shift+Q) to see Front/Side Z-height flow views
    - Click "Build Geometry" to generate 3D geometry
 
@@ -165,14 +163,14 @@ python3 main.py
 
 ## Module Library
 
-### Rooms (19)
-Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard, Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, SecretChamber
+### Rooms (23)
+Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard, Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, Gatehouse, Sewer, Ossuary, Cloister, Colosseum
 
 ### Multi-Floor Rooms (8)
 Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge
 
-### Halls (6)
-StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, SecretHall
+### Halls (5)
+StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall
 
 ### Structural (6)
 StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement

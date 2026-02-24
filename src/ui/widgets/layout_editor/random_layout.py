@@ -43,6 +43,7 @@ ROOM_TYPES = [
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage', 'GreatHall',
     'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
+    'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
     # Multi-Floor Rooms (8 rooms with internal upper portals and stairs)
     'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
     'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
@@ -83,9 +84,6 @@ MULTI_FLOOR_ROOM_TYPES = [
 
 # Floor separation in units (must match FLOOR_LEVELS delta)
 FLOOR_SEPARATION = 160
-
-# Secret room type - placed based on secret_room_frequency
-SECRET_ROOM_TYPE = 'SecretChamber'
 
 
 def _collect_upper_portals_from_lower_floor(
@@ -244,7 +242,6 @@ def generate_random_layout(
     room_probability: float = 0.4,
     min_hall_between_rooms: int = 1,
     allow_dead_ends: bool = True,
-    secret_room_frequency: int = 0,
     exclude_tall: bool = False,
     require_stair_space: bool = False,
     exclude_multi_floor: bool = False,
@@ -263,7 +260,6 @@ def generate_random_layout(
         room_probability: Base probability of placing a room (0.0-1.0)
         min_hall_between_rooms: Minimum halls between consecutive rooms
         allow_dead_ends: Whether to allow dead-end corridors
-        secret_room_frequency: Percentage of rooms that should be SecretChambers (0-100)
         exclude_tall: If True, exclude tall rooms (Tower, Sanctuary, etc.) for multi-floor layouts
         require_stair_space: If True, stop generation early if no stair-friendly portals remain
         exclude_multi_floor: If True, exclude multi-floor rooms (for non-top floors)
@@ -303,11 +299,8 @@ def generate_random_layout(
     # Track placed primitives
     placed_rooms = 0
     placed_halls = 0
-    placed_secret_rooms = 0
     halls_since_last_room = 0
     max_halls = room_count * 3  # Limit halls to prevent infinite growth
-    # Calculate target number of secret rooms based on frequency
-    target_secret_rooms = int(room_count * secret_room_frequency / 100.0)
 
     # Main generation loop - extend from open portals
     iterations = 0
@@ -341,10 +334,9 @@ def generate_random_layout(
             effective_room_prob = min(0.8, room_probability + 0.2)
 
         if placed_rooms < room_count and random.random() < effective_room_prob:
-            # Try to place a room - check if we should place a secret room
+            # Try to place a room
             prim_type = _select_room_type(
                 complexity, preferred_room_types,
-                placed_rooms, placed_secret_rooms, target_secret_rooms,
                 exclude_tall=exclude_tall,
                 exclude_multi_floor=exclude_multi_floor,
             )
@@ -417,11 +409,9 @@ def generate_random_layout(
         _debug(f"[RANDOM_LAYOUT] Open portals now: {len(open_portals)}")
 
         # Update counts
-        if prim_type in ROOM_TYPES or prim_type == SECRET_ROOM_TYPE:
+        if prim_type in ROOM_TYPES:
             placed_rooms += 1
             halls_since_last_room = 0
-            if prim_type == SECRET_ROOM_TYPE:
-                placed_secret_rooms += 1
         else:
             placed_halls += 1
             halls_since_last_room += 1
@@ -453,37 +443,20 @@ def generate_random_layout(
 def _select_room_type(
     complexity: int,
     preferred: Optional[List[str]] = None,
-    placed_rooms: int = 0,
-    placed_secret_rooms: int = 0,
-    target_secret_rooms: int = 0,
     exclude_tall: bool = False,
     exclude_multi_floor: bool = False,
 ) -> str:
-    """Select a room type based on complexity, preferences, and secret room targets.
+    """Select a room type based on complexity and preferences.
 
     Args:
         complexity: Layout complexity (1-5)
         preferred: Preferred room types to use
-        placed_rooms: Number of rooms already placed
-        placed_secret_rooms: Number of secret rooms already placed
-        target_secret_rooms: Target number of secret rooms to place
         exclude_tall: If True, exclude tall rooms (for multi-floor layouts)
         exclude_multi_floor: If True, exclude multi-floor rooms (for non-top floors)
 
     Returns:
         Selected room type name
     """
-    # Check if we should place a secret room
-    # Place one if we haven't reached target and probability check passes
-    if placed_secret_rooms < target_secret_rooms:
-        # Calculate probability: increase as we approach room target with few secrets
-        rooms_remaining = max(1, 10 - placed_rooms)  # Assume ~10 total rooms
-        secrets_needed = target_secret_rooms - placed_secret_rooms
-        # Higher probability if we're behind on secret rooms
-        secret_prob = min(0.8, secrets_needed / rooms_remaining)
-        if random.random() < secret_prob:
-            return SECRET_ROOM_TYPE
-
     # Use preferred types if provided and valid
     if preferred:
         valid_preferred = [r for r in preferred if r in ROOM_TYPES]
@@ -1423,7 +1396,6 @@ def generate_multi_floor_layout(
     room_probability: float = 0.4,
     min_hall_between_rooms: int = 1,
     allow_dead_ends: bool = True,
-    secret_room_frequency: int = 0,
     max_retry_attempts: int = 3,
 ) -> Tuple[DungeonLayout, int]:
     """
@@ -1447,7 +1419,6 @@ def generate_multi_floor_layout(
         room_probability: Base probability of placing a room (0.0-1.0)
         min_hall_between_rooms: Minimum halls between consecutive rooms
         allow_dead_ends: Whether to allow dead-end corridors
-        secret_room_frequency: Percentage of rooms that should be SecretChambers (0-100)
         max_retry_attempts: Maximum number of retry attempts if stair placement fails
 
     Returns:
@@ -1530,7 +1501,6 @@ def generate_multi_floor_layout(
                 room_probability=room_probability,
                 min_hall_between_rooms=min_hall_between_rooms,
                 allow_dead_ends=allow_dead_ends,
-                secret_room_frequency=secret_room_frequency,
                 exclude_tall=True,  # Multi-floor: exclude tall rooms to prevent collisions
                 require_stair_space=needs_stair_space,
                 exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
@@ -1602,7 +1572,6 @@ def generate_multi_floor_layout(
                         room_probability,
                         min_hall_between_rooms,
                         allow_dead_ends,
-                        secret_room_frequency,
                         floor_occupied[floor_idx],
                         combined_layout=combined_layout,
                         require_stair_space=needs_stair_space,
@@ -1686,7 +1655,6 @@ def generate_multi_floor_layout(
                             room_probability,
                             min_hall_between_rooms,
                             allow_dead_ends,
-                            secret_room_frequency,
                             floor_occupied[floor_idx],
                             combined_layout=combined_layout,
                             require_stair_space=needs_stair_space,
@@ -1782,7 +1750,6 @@ def generate_multi_floor_layout(
                             room_probability=room_probability,
                             min_hall_between_rooms=min_hall_between_rooms,
                             allow_dead_ends=allow_dead_ends,
-                            secret_room_frequency=secret_room_frequency,
                             exclude_tall=True,  # Multi-floor: exclude tall rooms
                             require_stair_space=needs_stair_space,
                             exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
@@ -1837,7 +1804,6 @@ def generate_multi_floor_layout(
                     room_probability=room_probability,
                     min_hall_between_rooms=min_hall_between_rooms,
                     allow_dead_ends=allow_dead_ends,
-                    secret_room_frequency=secret_room_frequency,
                     exclude_tall=True,  # Multi-floor: exclude tall rooms
                     require_stair_space=needs_stair_space,
                     exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
@@ -2840,7 +2806,6 @@ def _generate_floor_from_portal(
     room_probability: float,
     min_hall_between_rooms: int,
     allow_dead_ends: bool,
-    secret_room_frequency: int,
     occupied: Set[Tuple[int, int]],
     combined_layout: Optional[DungeonLayout] = None,
     require_stair_space: bool = False,
@@ -2977,8 +2942,6 @@ def _generate_floor_from_portal(
     placed_halls = 1  # Count the starting hall
     halls_since_last_room = 1
     max_halls = room_count * 3
-    target_secret_rooms = int(room_count * secret_room_frequency / 100.0)
-    placed_secret_rooms = 0
 
     iterations = 0
     max_iterations = room_count * 10
@@ -3031,7 +2994,6 @@ def _generate_floor_from_portal(
             # Exclude tall rooms and multi-floor rooms in multi-floor layouts to prevent collisions
             prim_type = _select_room_type(
                 complexity, preferred_room_types,
-                placed_rooms, placed_secret_rooms, target_secret_rooms,
                 exclude_tall=True,
                 exclude_multi_floor=exclude_multi_floor,
             )
@@ -3103,11 +3065,9 @@ def _generate_floor_from_portal(
         _collect_open_portals(new_prim, open_portals, layout, exclude_portal=connecting_portal_id)
 
         # Update counts
-        if prim_type in ROOM_TYPES or prim_type == SECRET_ROOM_TYPE:
+        if prim_type in ROOM_TYPES:
             placed_rooms += 1
             halls_since_last_room = 0
-            if prim_type == SECRET_ROOM_TYPE:
-                placed_secret_rooms += 1
         else:
             placed_halls += 1
             halls_since_last_room += 1
