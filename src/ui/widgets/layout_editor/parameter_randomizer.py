@@ -38,7 +38,10 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
         # sanctuary_type: FORBIDDEN — basilica/cruciform/hall_church add aisles/transepts
         # that extend geometry beyond the footprint, causing BSP leaks.
         # apse: FORBIDDEN — extends geometry beyond the back wall boundary.
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
         'pillar_style': {
             'type': 'choice',
             'choices': ['square', 'hexagonal', 'octagonal', 'round']
@@ -48,7 +51,8 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
     'Tomb': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        # shell_sides: EXCLUDED — multi-portal room (entrance + exit).
+        # Polygonal shell system only supports single-portal rooms.
         'coffin_count': {'type': 'int', 'min': 0, 'max': 8},
         'coffin_layout': {
             'type': 'choice',
@@ -59,12 +63,18 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
     'Tower': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Chamber': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
         'pillar_style': {
             'type': 'choice',
             'choices': ['square', 'hexagonal', 'octagonal', 'round']
@@ -74,12 +84,17 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
     'Storage': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        # 2×2 footprint — conservative set (high shell_sides may exceed footprint)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6],
+        },
     },
 
     'GreatHall': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        # shell_sides: EXCLUDED — asymmetric 4×6 footprint with off-center entrance
+        # portal (cell 1,0) causes vestibule X misalignment in polygonal mode.
         'pillar_style': {
             'type': 'choice',
             'choices': ['square', 'hexagonal', 'octagonal', 'round']
@@ -89,17 +104,27 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
     'Prison': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Armory': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        # 2×3 footprint — slightly conservative set
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8],
+        },
     },
 
     'Cistern': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
         'pillar_style': {
             'type': 'choice',
             'choices': ['square', 'hexagonal', 'octagonal', 'round']
@@ -109,47 +134,72 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
     'Stronghold': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Courtyard': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Arena': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Laboratory': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Vault': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Barracks': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Shrine': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Pit': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        'shell_sides': {
+            'type': 'choice',
+            'choices': [3, 4, 5, 6, 8, 10],
+        },
     },
 
     'Antechamber': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
-        # shell_sides: disabled in random layout (polygonal portal issues)
+        # shell_sides: EXCLUDED — multi-portal room (entrance, exit, side_east, side_west).
+        # Polygonal shell system only supports single-portal rooms.
     },
 
     'Hub': {

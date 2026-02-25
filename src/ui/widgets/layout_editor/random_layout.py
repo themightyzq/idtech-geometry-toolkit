@@ -54,7 +54,7 @@ ROOM_TYPES = [
 # Rooms with thick walls (t > 16) also need extra separation.
 # These rooms exceed the safe limit and would collide with adjacent floor geometry.
 TALL_ROOMS = [
-    'Tower',      # height=384, t=16 (needs 416 separation)
+    'Tower',      # height=768, t=16 (needs 800 separation)
     'Sanctuary',  # nave_height=192, t=16 (needs 224 separation)
     'GreatHall',  # height=192, t=16 (needs 224 separation)
     'Stronghold', # height=192, t=32 (needs 256 separation)

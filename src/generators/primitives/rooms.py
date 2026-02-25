@@ -1719,21 +1719,18 @@ class Tomb(GeometricPrimitive):
 
 
 class Tower(GeometricPrimitive):
-    """An octagonal tower approximation with multi-level interior and stairs.
+    """A tall, open tower shell for manual interior detailing.
 
     Features:
     - Octagonal shape approximated with overlapping rectangles
-    - Multiple floors/levels with stairwell openings
-    - Spiral or straight stairs connecting all levels
+    - Tall open interior (no generated stairs — add in editor)
     - Ground floor entrance (controllable via has_entrance)
     - 100% sealed geometry
     """
 
     tower_radius: float = 128.0
-    tower_height: float = 384.0
-    levels: int = 3
+    tower_height: float = 768.0
     shell_sides: int = 8  # Default 8 for traditional octagonal tower
-    stair_type: str = "straight"    # straight only (spiral removed)
     random_seed: int = 0
 
     # Portal control - set by layout generator based on connections
@@ -1766,12 +1763,8 @@ class Tower(GeometricPrimitive):
                 "description": "Outer radius of the tower from center to wall"
             },
             "tower_height": {
-                "type": "float", "default": 384.0, "min": 128, "max": 1024, "label": "Height",
+                "type": "float", "default": 768.0, "min": 128, "max": 2048, "label": "Height",
                 "description": "Total height of the tower from base to roof"
-            },
-            "levels": {
-                "type": "int", "default": 3, "min": 1, "max": 6, "label": "Levels",
-                "description": "Number of interior floors connected by stairs"
             },
             "shell_sides": {
                 "type": "int",
@@ -1780,10 +1773,6 @@ class Tower(GeometricPrimitive):
                 "max": 16,
                 "label": "Shell Sides",
                 "description": "Number of sides (4=square, 6=hex, 8=octagon traditional)"
-            },
-            "stair_type": {
-                "type": "choice", "default": "straight", "choices": ["straight"], "label": "Stair Type",
-                "description": "Type of interior staircase between levels"
             },
             "has_entrance": {
                 "type": "bool", "default": True, "label": "Enable Entrance Portal",
@@ -1813,7 +1802,6 @@ class Tower(GeometricPrimitive):
         # Structural dimensions - MUST be exact for portal alignment
         r = self.tower_radius
         total_h = self.tower_height
-        level_h = total_h / self.levels
 
         # Use polygonal shell if sides != 8 (Tower default is octagonal)
         # Note: Multi-level interior and stairs disabled for non-octagonal
@@ -1877,107 +1865,6 @@ class Tower(GeometricPrimitive):
         brushes.append(self._box(ox - r - t, oy - r - t, oz - t, ox - inner + t, oy - inner + t, oz + total_h + t))
         brushes.append(self._box(ox + inner - t, oy - r - t, oz - t, ox + r + t, oy - inner + t, oz + total_h + t))
 
-        # Interior level floors with stairwell openings
-        # Opening location depends on stair type
-        if self.stair_type.lower() == "spiral":
-            # Spiral stairs: central opening
-            stair_cx = ox + r * 0.4
-            stair_cy = oy + inner * 0.4
-            stairwell_r = min(r * 0.6, inner * 0.7) + 16
-
-            for lvl in range(1, self.levels):
-                fz = oz + lvl * level_h
-                # Create floor with circular stairwell cutout
-                brushes.append(self._box(
-                    ox - r, oy - inner, fz - t,
-                    ox + r, stair_cy - stairwell_r, fz
-                ))
-                brushes.append(self._box(
-                    ox - r, stair_cy + stairwell_r, fz - t,
-                    ox + r, oy + inner, fz
-                ))
-                brushes.append(self._box(
-                    ox - r, stair_cy - stairwell_r, fz - t,
-                    stair_cx - stairwell_r, stair_cy + stairwell_r, fz
-                ))
-                brushes.append(self._box(
-                    stair_cx + stairwell_r, stair_cy - stairwell_r, fz - t,
-                    ox + r, stair_cy + stairwell_r, fz
-                ))
-                # E-W floor sections for octagon corners
-                brushes.append(self._box(ox - inner, oy - r, fz - t, ox + inner, oy - inner, fz))
-                brushes.append(self._box(ox - inner, oy + inner, fz - t, ox + inner, oy + r, fz))
-        else:
-            # Straight/perimeter stairs: create proper floors with stair openings
-            # Stairs wrap around: wall 0 (right/+X) → wall 1 (back/+Y) → wall 2 (left/-X) → wall 3 (front/-Y)
-            stair_width = 48.0   # Match _generate_straight_stairs
-            wall_gap = 8.0       # Match _generate_straight_stairs
-            stair_zone = stair_width + wall_gap + 16  # Zone to keep clear for stairs
-
-            for lvl in range(1, self.levels):
-                fz = oz + lvl * level_h
-                wall_index = (lvl - 1) % 4  # Which wall has stairs arriving at this floor
-
-                # Create main floor pieces (two overlapping rectangles for octagon)
-                # but with cutouts for the stair arrival zone
-
-                if wall_index == 0:
-                    # Stairs arrive from right wall (+X side)
-                    # Main N-S rectangle with cutout on right
-                    brushes.append(self._box(ox - r, oy - inner, fz - t, ox + r - stair_zone, oy + inner, fz))
-                    # Fill above/below stair zone on right
-                    brushes.append(self._box(ox + r - stair_zone, oy - inner, fz - t, ox + r, oy - stair_zone, fz))
-                    brushes.append(self._box(ox + r - stair_zone, oy + stair_zone, fz - t, ox + r, oy + inner, fz))
-                    # E-W rectangle (full, stairs don't penetrate this direction)
-                    brushes.append(self._box(ox - inner, oy - r, fz - t, ox + inner, oy - inner, fz))
-                    brushes.append(self._box(ox - inner, oy + inner, fz - t, ox + inner, oy + r, fz))
-
-                elif wall_index == 1:
-                    # Stairs arrive from back wall (+Y side)
-                    # Main N-S rectangle (full, stairs don't penetrate this direction)
-                    brushes.append(self._box(ox - r, oy - inner, fz - t, ox + r, oy + inner - stair_zone, fz))
-                    # E-W rectangle with cutout on back
-                    brushes.append(self._box(ox - inner, oy - r, fz - t, ox + inner, oy - inner, fz))
-                    brushes.append(self._box(ox - inner, oy + inner, fz - t, ox - stair_zone, oy + r, fz))
-                    brushes.append(self._box(ox + stair_zone, oy + inner, fz - t, ox + inner, oy + r, fz))
-                    # Fill the gap from main rect to back
-                    brushes.append(self._box(ox - r, oy + inner - stair_zone, fz - t, ox - stair_zone, oy + inner, fz))
-                    brushes.append(self._box(ox + stair_zone, oy + inner - stair_zone, fz - t, ox + r, oy + inner, fz))
-
-                elif wall_index == 2:
-                    # Stairs arrive from left wall (-X side)
-                    # Main N-S rectangle with cutout on left
-                    brushes.append(self._box(ox - r + stair_zone, oy - inner, fz - t, ox + r, oy + inner, fz))
-                    # Fill above/below stair zone on left
-                    brushes.append(self._box(ox - r, oy - inner, fz - t, ox - r + stair_zone, oy - stair_zone, fz))
-                    brushes.append(self._box(ox - r, oy + stair_zone, fz - t, ox - r + stair_zone, oy + inner, fz))
-                    # E-W rectangle (full)
-                    brushes.append(self._box(ox - inner, oy - r, fz - t, ox + inner, oy - inner, fz))
-                    brushes.append(self._box(ox - inner, oy + inner, fz - t, ox + inner, oy + r, fz))
-
-                else:
-                    # Stairs arrive from front wall (-Y side)
-                    # Main N-S rectangle (full)
-                    brushes.append(self._box(ox - r, oy - inner + stair_zone, fz - t, ox + r, oy + inner, fz))
-                    # E-W rectangle with cutout on front
-                    brushes.append(self._box(ox - inner, oy - r, fz - t, ox - stair_zone, oy - inner, fz))
-                    brushes.append(self._box(ox + stair_zone, oy - r, fz - t, ox + inner, oy - inner, fz))
-                    brushes.append(self._box(ox - inner, oy + inner, fz - t, ox + inner, oy + r, fz))
-                    # Fill the gap from main rect to front
-                    brushes.append(self._box(ox - r, oy - inner, fz - t, ox - stair_zone, oy - inner + stair_zone, fz))
-                    brushes.append(self._box(ox + stair_zone, oy - inner, fz - t, ox + r, oy - inner + stair_zone, fz))
-
-        # Generate stairs
-        if self.levels > 1:
-            if self.stair_type.lower() == "spiral":
-                brushes.extend(self._generate_spiral_stairs(
-                    ox, oy, oz, r, inner, total_h, level_h, rng
-                ))
-            else:
-                brushes.extend(self._generate_straight_stairs(
-                    ox, oy, oz, r, inner, total_h, level_h, rng
-                ))
-
         # Register portal tag for octagonal tower
         if self.has_entrance:
             self._register_portal_tag(
@@ -2027,179 +1914,6 @@ class Tower(GeometricPrimitive):
                     center_z=upper_z,
                     direction=PortalDirection.WEST,
                 )
-
-        return brushes
-
-    def _generate_spiral_stairs(
-        self,
-        ox: float, oy: float, oz: float,
-        r: float, inner: float,
-        total_h: float, level_h: float,
-        rng: random.Random
-    ) -> List[Brush]:
-        """Generate spiral stairs wrapping around a central post.
-
-        Creates a proper spiral staircase with pie-slice steps radiating
-        from a central column. Each step is a wedge that connects to
-        the next, forming a continuous ascending spiral.
-        """
-        brushes: List[Brush] = []
-
-        # Center the spiral in the back-right area of the tower
-        # Use a larger radius for a visible spiral
-        cx = ox + r * 0.4  # Offset toward back-right
-        cy = oy + inner * 0.4
-
-        # Central post (runs full height)
-        post_r = 16.0
-        brushes.append(self._box(
-            cx - post_r, cy - post_r, oz,
-            cx + post_r, cy + post_r, oz + total_h
-        ))
-
-        # Spiral parameters - use a large radius for visibility
-        spiral_inner_r = post_r + 4  # Small gap from post
-        spiral_outer_r = min(r * 0.6, inner * 0.7)  # Large enough to see
-
-        # Climbable step height (max 16 units for comfortable climbing)
-        step_h = 12.0  # Conservative for easy climbing
-        steps_per_rotation = 12  # Steps to complete one full circle
-        angle_per_step = (2 * math.pi) / steps_per_rotation
-
-        # Generate steps for full tower height
-        total_steps = int(total_h / step_h)
-
-        for step in range(total_steps):
-            # Each step is a pie-slice wedge
-            angle1 = step * angle_per_step
-            angle2 = (step + 1) * angle_per_step
-            step_z = oz + step * step_h
-
-            # Use radial segment for proper pie-slice geometry
-            brushes.append(self._radial_segment(
-                cx, cy, step_z, step_z + step_h,
-                spiral_inner_r, spiral_outer_r,
-                angle1, angle2
-            ))
-
-        return brushes
-
-    def _generate_straight_stairs(
-        self,
-        ox: float, oy: float, oz: float,
-        r: float, inner: float,
-        total_h: float, level_h: float,
-        rng: random.Random
-    ) -> List[Brush]:
-        """Generate perimeter stairs that connect tower floor levels.
-
-        Creates stairs that properly connect each floor level:
-        - Stairs run along one wall per level
-        - Each flight starts at a floor level and ends at the next floor
-        - Landing platforms at each floor for access
-        """
-        brushes: List[Brush] = []
-
-        # Stair dimensions
-        stair_width = 48.0   # Width of stair treads
-        step_h = 16.0        # Height per step (max for comfortable climbing)
-        wall_gap = 8.0       # Gap between stairs and outer wall
-
-        # Calculate steps needed per floor
-        steps_per_level = int(level_h / step_h)
-        actual_step_h = level_h / steps_per_level  # Exact step height to reach floor
-
-        # Stair run positions along each wall (cycle through walls for each level)
-        # Wall 0: Right wall (+X side), stairs run in +Y
-        # Wall 1: Back wall (+Y side), stairs run in -X
-        # Wall 2: Left wall (-X side), stairs run in -Y
-        # Wall 3: Front wall (-Y side), stairs run in +X
-
-        for level in range(self.levels - 1):
-            floor_z = oz + level * level_h
-            next_floor_z = oz + (level + 1) * level_h
-            wall_index = level % 4
-
-            # Calculate stair depth per step (to fit all steps along the wall)
-            wall_length = 2 * inner - 2 * stair_width  # Available length along wall
-            step_d = wall_length / steps_per_level
-
-            # Generate stairs for this level
-            if wall_index == 0:
-                # Right wall: stairs along +Y direction
-                start_x = ox + r - wall_gap - stair_width
-                start_y = oy - inner + stair_width
-
-                for step in range(steps_per_level):
-                    sy = start_y + step * step_d
-                    sz = floor_z + step * actual_step_h
-                    brushes.append(self._box(
-                        start_x, sy, sz,
-                        start_x + stair_width, sy + step_d, sz + actual_step_h
-                    ))
-
-                # Landing at next floor level (at end of stairs)
-                brushes.append(self._box(
-                    start_x - 16, start_y + wall_length - 16, next_floor_z - 8,
-                    start_x + stair_width + 16, start_y + wall_length + stair_width, next_floor_z
-                ))
-
-            elif wall_index == 1:
-                # Back wall: stairs along -X direction
-                start_x = ox + inner - stair_width
-                start_y = oy + r - wall_gap - stair_width
-
-                for step in range(steps_per_level):
-                    sx = start_x - step * step_d
-                    sz = floor_z + step * actual_step_h
-                    brushes.append(self._box(
-                        sx - step_d, start_y, sz,
-                        sx, start_y + stair_width, sz + actual_step_h
-                    ))
-
-                # Landing at next floor level
-                brushes.append(self._box(
-                    start_x - wall_length - stair_width, start_y - 16, next_floor_z - 8,
-                    start_x - wall_length + 16, start_y + stair_width + 16, next_floor_z
-                ))
-
-            elif wall_index == 2:
-                # Left wall: stairs along -Y direction
-                start_x = ox - r + wall_gap
-                start_y = oy + inner - stair_width
-
-                for step in range(steps_per_level):
-                    sy = start_y - step * step_d
-                    sz = floor_z + step * actual_step_h
-                    brushes.append(self._box(
-                        start_x, sy - step_d, sz,
-                        start_x + stair_width, sy, sz + actual_step_h
-                    ))
-
-                # Landing at next floor level
-                brushes.append(self._box(
-                    start_x - 16, start_y - wall_length - stair_width, next_floor_z - 8,
-                    start_x + stair_width + 16, start_y - wall_length + 16, next_floor_z
-                ))
-
-            else:
-                # Front wall: stairs along +X direction
-                start_x = ox - inner + stair_width
-                start_y = oy - r + wall_gap
-
-                for step in range(steps_per_level):
-                    sx = start_x + step * step_d
-                    sz = floor_z + step * actual_step_h
-                    brushes.append(self._box(
-                        sx, start_y, sz,
-                        sx + step_d, start_y + stair_width, sz + actual_step_h
-                    ))
-
-                # Landing at next floor level
-                brushes.append(self._box(
-                    start_x + wall_length - 16, start_y - 16, next_floor_z - 8,
-                    start_x + wall_length + stair_width + 16, start_y + stair_width + 16, next_floor_z
-                ))
 
         return brushes
 

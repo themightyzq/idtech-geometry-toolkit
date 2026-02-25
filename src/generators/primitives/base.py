@@ -572,8 +572,11 @@ class GeometricPrimitive(ABC):
             }
 
         for i in range(sides):
-            angle1 = i * angle_step - math.pi / 2  # Start from -Y (SOUTH)
-            angle2 = (i + 1) * angle_step - math.pi / 2
+            # Rotate polygon so segment MIDPOINTS (wall faces) align with cardinal
+            # directions. The -angle_step/2 offset shifts from vertex-at-south to
+            # segment-face-at-south, ensuring vestibule direction matches portal direction.
+            angle1 = i * angle_step - math.pi / 2 - angle_step / 2
+            angle2 = (i + 1) * angle_step - math.pi / 2 - angle_step / 2
 
             # Outer corners of this wall segment
             x1_out = self._snap_coord(cx + radius * math.cos(angle1))
@@ -850,7 +853,8 @@ class GeometricPrimitive(ABC):
         max_y = float('-inf')
 
         for i in range(sides):
-            angle = i * angle_step - math.pi / 2
+            # Match rotation offset from _generate_polygonal_walls: segment faces align with cardinals
+            angle = i * angle_step - math.pi / 2 - angle_step / 2
             x = cx + ext_radius * math.cos(angle)
             y = cy + ext_radius * math.sin(angle)
             min_x = min(min_x, x)
@@ -988,9 +992,9 @@ class GeometricPrimitive(ABC):
         best_diff = 360
 
         for i in range(sides):
-            # Segment center angle (midpoint of the segment arc)
-            # Segments start from -90° (SOUTH) to match _generate_polygonal_walls()
-            # which uses: angle = i * angle_step - math.pi / 2
+            # Segment midpoint angle. With rotation offset (-angle_step/2) in
+            # _generate_polygonal_walls, segment i midpoint = i * angle_step - 90°.
+            # Segment 0 midpoint = -90° = 270° = SOUTH (correct).
             segment_angle = (i * angle_step - 90) % 360
             diff = abs(segment_angle - target)
             if diff > 180:
@@ -1038,9 +1042,9 @@ class GeometricPrimitive(ABC):
             (x, y) tuple of the segment chord midpoint
         """
         angle_step = 2 * math.pi / sides
-        # Segments start from -90 degrees (SOUTH) to match wall generation
-        angle1 = segment_index * angle_step - math.pi / 2
-        angle2 = (segment_index + 1) * angle_step - math.pi / 2
+        # Match rotation offset from _generate_polygonal_walls: segment faces align with cardinals
+        angle1 = segment_index * angle_step - math.pi / 2 - angle_step / 2
+        angle2 = (segment_index + 1) * angle_step - math.pi / 2 - angle_step / 2
 
         # Chord midpoint is average of corner positions
         # NOT: radius * cos((angle1 + angle2) / 2) which gives a different point
@@ -1082,7 +1086,8 @@ class GeometricPrimitive(ABC):
         # Use room center X for grid alignment
         # The Y coordinate uses the segment's approximate position
         angle_step = 2 * math.pi / sides
-        segment_center_angle = (portal_segment + 0.5) * angle_step - math.pi / 2
+        # With rotation offset (-angle_step/2), segment midpoint = i * angle_step - pi/2
+        segment_center_angle = portal_segment * angle_step - math.pi / 2
 
         self._portal_target_x = cx
         self._portal_target_y = cy + radius * math.sin(segment_center_angle)
@@ -1152,33 +1157,34 @@ class GeometricPrimitive(ABC):
             vest_min_y = self._snap_coord(footprint_edge)  # South edge (footprint boundary)
             vest_max_y = self._snap_coord(polygon_inner_edge)  # North edge (polygon interior)
 
-            # Floor - extends outward at footprint edge, extends INTO polygon zone
-            # to seal with angled polygon walls (overlapping brushes OK in idTech)
+            # Floor - extends by t in non-portal directions per Rule 1
+            # Portal direction (south/vest_min_y) must NOT extend by t, because
+            # that pushes the bounding box past the footprint boundary, causing
+            # normalization to misalign the portal wall by t units.
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz - t,
-                vest_max_x + t, vest_max_y + t, oz,  # Extend into polygon zone
+                vest_min_x - t, vest_min_y, oz - t,
+                vest_max_x + t, vest_max_y + t, oz,
                 floor_tex
             ))
 
-            # Ceiling - same pattern as floor
+            # Ceiling
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz + h,
-                vest_max_x + t, vest_max_y + t, oz + h + t,  # Extend into polygon zone
+                vest_min_x - t, vest_min_y, oz + h,
+                vest_max_x + t, vest_max_y + t, oz + h + t,
                 ceiling_tex
             ))
 
-            # West wall - extend INTO polygon wall zone to seal junction
-            # idTech handles overlapping brushes correctly
+            # West wall - extend to polygon center to seal angled junction
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz,
-                vest_min_x, vest_max_y + t, oz + h,  # Extend into polygon zone
+                vest_min_x - t, vest_min_y, oz,
+                vest_min_x, cy + t, oz + h,
                 tex
             ))
 
             # East wall - same pattern
             brushes.append(self._box(
-                vest_max_x, vest_min_y - t, oz,
-                vest_max_x + t, vest_max_y + t, oz + h,  # Extend into polygon zone
+                vest_max_x, vest_min_y, oz,
+                vest_max_x + t, cy + t, oz + h,
                 tex
             ))
 
@@ -1215,7 +1221,31 @@ class GeometricPrimitive(ABC):
                     tex
                 ))
 
-            # NO north wall - open to polygon interior
+            # North wall at polygon_inner_edge with portal opening
+            # This seals the junction between the rectangular vestibule and the
+            # angled polygon walls, preventing gaps when the polygon chord is
+            # narrower than the vestibule width.
+            portal_left_n = self._snap_coord(cx - hw)
+            portal_right_n = self._snap_coord(cx + hw)
+            # Left piece
+            brushes.append(self._box(
+                vest_min_x - t, vest_max_y, oz,
+                portal_left_n, vest_max_y + t, oz + h,
+                tex
+            ))
+            # Right piece
+            brushes.append(self._box(
+                portal_right_n, vest_max_y, oz,
+                vest_max_x + t, vest_max_y + t, oz + h,
+                tex
+            ))
+            # Lintel above portal
+            if ph < h:
+                brushes.append(self._box(
+                    portal_left_n, vest_max_y, oz + ph,
+                    portal_right_n, vest_max_y + t, oz + h,
+                    tex
+                ))
 
         elif direction == 'NORTH':
             # Vestibule extends from polygon (south) to footprint edge (north)
@@ -1224,31 +1254,32 @@ class GeometricPrimitive(ABC):
             vest_min_y = self._snap_coord(polygon_inner_edge)  # South edge (polygon interior)
             vest_max_y = self._snap_coord(footprint_edge)  # North edge (footprint boundary)
 
-            # Floor - extend INTO polygon zone on south side to seal junction
+            # Floor - extends by t in non-portal directions
+            # Portal direction (north/vest_max_y) must NOT extend by t
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz - t,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz,
+                vest_min_x - t, vest_min_y - t, oz - t,
+                vest_max_x + t, vest_max_y, oz,
                 floor_tex
             ))
 
             # Ceiling
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz + h,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz + h + t,
+                vest_min_x - t, vest_min_y - t, oz + h,
+                vest_max_x + t, vest_max_y, oz + h + t,
                 ceiling_tex
             ))
 
-            # West wall - extend INTO polygon wall zone to seal junction
+            # West wall - extend to polygon center
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz,  # Extend into polygon zone
-                vest_min_x, vest_max_y + t, oz + h,
+                vest_min_x - t, cy - t, oz,
+                vest_min_x, vest_max_y, oz + h,
                 tex
             ))
 
-            # East wall
+            # East wall - extend to polygon center
             brushes.append(self._box(
-                vest_max_x, vest_min_y - t, oz,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz + h,
+                vest_max_x, cy - t, oz,
+                vest_max_x + t, vest_max_y, oz + h,
                 tex
             ))
 
@@ -1283,6 +1314,30 @@ class GeometricPrimitive(ABC):
                     tex
                 ))
 
+            # South wall at polygon_inner_edge with portal opening
+            # Seals junction between rectangular vestibule and angled polygon walls
+            portal_left_s = self._snap_coord(cx - hw)
+            portal_right_s = self._snap_coord(cx + hw)
+            # Left piece
+            brushes.append(self._box(
+                vest_min_x - t, vest_min_y - t, oz,
+                portal_left_s, vest_min_y, oz + h,
+                tex
+            ))
+            # Right piece
+            brushes.append(self._box(
+                portal_right_s, vest_min_y - t, oz,
+                vest_max_x + t, vest_min_y, oz + h,
+                tex
+            ))
+            # Lintel above portal
+            if ph < h:
+                brushes.append(self._box(
+                    portal_left_s, vest_min_y - t, oz + ph,
+                    portal_right_s, vest_min_y, oz + h,
+                    tex
+                ))
+
         elif direction == 'WEST':
             # Vestibule extends from polygon (east) to footprint edge (west)
             vest_min_x = self._snap_coord(footprint_edge)  # West edge (footprint boundary)
@@ -1290,31 +1345,32 @@ class GeometricPrimitive(ABC):
             vest_min_y = self._snap_coord(cy - hw - t)
             vest_max_y = self._snap_coord(cy + hw + t)
 
-            # Floor - extend INTO polygon zone on east side
+            # Floor - extends by t in non-portal directions
+            # Portal direction (west/vest_min_x) must NOT extend by t
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz - t,
-                vest_max_x + t, vest_max_y + t, oz,  # Extend into polygon zone
+                vest_min_x, vest_min_y - t, oz - t,
+                vest_max_x + t, vest_max_y + t, oz,
                 floor_tex
             ))
 
-            # Ceiling - extend INTO polygon zone
+            # Ceiling
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz + h,
-                vest_max_x + t, vest_max_y + t, oz + h + t,  # Extend into polygon zone
+                vest_min_x, vest_min_y - t, oz + h,
+                vest_max_x + t, vest_max_y + t, oz + h + t,
                 ceiling_tex
             ))
 
-            # South wall - extend INTO polygon zone
+            # South wall - extend to polygon center
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz,
-                vest_max_x + t, vest_min_y, oz + h,  # Extend into polygon zone
+                vest_min_x, vest_min_y - t, oz,
+                cx + t, vest_min_y, oz + h,
                 tex
             ))
 
-            # North wall - extend INTO polygon zone
+            # North wall - extend to polygon center
             brushes.append(self._box(
-                vest_min_x - t, vest_max_y, oz,
-                vest_max_x + t, vest_max_y + t, oz + h,  # Extend into polygon zone
+                vest_min_x, vest_max_y, oz,
+                cx + t, vest_max_y + t, oz + h,
                 tex
             ))
 
@@ -1349,6 +1405,30 @@ class GeometricPrimitive(ABC):
                     tex
                 ))
 
+            # East wall at polygon_inner_edge with portal opening
+            # Seals junction between rectangular vestibule and angled polygon walls
+            portal_bottom_e = self._snap_coord(cy - hw)
+            portal_top_e = self._snap_coord(cy + hw)
+            # Bottom piece
+            brushes.append(self._box(
+                vest_max_x, vest_min_y - t, oz,
+                vest_max_x + t, portal_bottom_e, oz + h,
+                tex
+            ))
+            # Top piece
+            brushes.append(self._box(
+                vest_max_x, portal_top_e, oz,
+                vest_max_x + t, vest_max_y + t, oz + h,
+                tex
+            ))
+            # Lintel above portal
+            if ph < h:
+                brushes.append(self._box(
+                    vest_max_x, portal_bottom_e, oz + ph,
+                    vest_max_x + t, portal_top_e, oz + h,
+                    tex
+                ))
+
         else:  # EAST
             # Vestibule extends from polygon (west) to footprint edge (east)
             vest_min_x = self._snap_coord(polygon_inner_edge)  # West edge (polygon interior)
@@ -1356,31 +1436,32 @@ class GeometricPrimitive(ABC):
             vest_min_y = self._snap_coord(cy - hw - t)
             vest_max_y = self._snap_coord(cy + hw + t)
 
-            # Floor - extend INTO polygon zone on west side
+            # Floor - extends by t in non-portal directions
+            # Portal direction (east/vest_max_x) must NOT extend by t
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz - t,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz,
+                vest_min_x - t, vest_min_y - t, oz - t,
+                vest_max_x, vest_max_y + t, oz,
                 floor_tex
             ))
 
-            # Ceiling - extend INTO polygon zone
+            # Ceiling
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz + h,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz + h + t,
+                vest_min_x - t, vest_min_y - t, oz + h,
+                vest_max_x, vest_max_y + t, oz + h + t,
                 ceiling_tex
             ))
 
-            # South wall - extend INTO polygon zone
+            # South wall - extend to polygon center
             brushes.append(self._box(
-                vest_min_x - t, vest_min_y - t, oz,  # Extend into polygon zone
-                vest_max_x + t, vest_min_y, oz + h,
+                cx - t, vest_min_y - t, oz,
+                vest_max_x, vest_min_y, oz + h,
                 tex
             ))
 
-            # North wall - extend INTO polygon zone
+            # North wall - extend to polygon center
             brushes.append(self._box(
-                vest_min_x - t, vest_max_y, oz,  # Extend into polygon zone
-                vest_max_x + t, vest_max_y + t, oz + h,
+                cx - t, vest_max_y, oz,
+                vest_max_x, vest_max_y + t, oz + h,
                 tex
             ))
 
@@ -1412,6 +1493,30 @@ class GeometricPrimitive(ABC):
                 brushes.append(self._box(
                     vest_max_x - t, vest_min_y - t, oz,
                     vest_max_x, vest_max_y + t, oz + h,
+                    tex
+                ))
+
+            # West wall at polygon_inner_edge with portal opening
+            # Seals junction between rectangular vestibule and angled polygon walls
+            portal_bottom_w = self._snap_coord(cy - hw)
+            portal_top_w = self._snap_coord(cy + hw)
+            # Bottom piece
+            brushes.append(self._box(
+                vest_min_x - t, vest_min_y - t, oz,
+                vest_min_x, portal_bottom_w, oz + h,
+                tex
+            ))
+            # Top piece
+            brushes.append(self._box(
+                vest_min_x - t, portal_top_w, oz,
+                vest_min_x, vest_max_y + t, oz + h,
+                tex
+            ))
+            # Lintel above portal
+            if ph < h:
+                brushes.append(self._box(
+                    vest_min_x - t, portal_bottom_w, oz + ph,
+                    vest_min_x, portal_top_w, oz + h,
                     tex
                 ))
 
@@ -1449,48 +1554,59 @@ class GeometricPrimitive(ABC):
         t = wall_thickness
 
         # Determine portal direction from segment angle
+        # With rotation offset (-angle_step/2), segment midpoint = i * angle_step - pi/2
         angle_step = 2 * math.pi / sides
-        segment_center_angle = (portal_segment + 0.5) * angle_step - math.pi / 2
+        segment_center_angle = portal_segment * angle_step - math.pi / 2
         angle_deg = (math.degrees(segment_center_angle) + 360) % 360
 
         # Calculate inner radius (where polygon walls end on inside)
         inner_radius = radius - t
 
+        # The polygon_inner_edge must be at the actual inner face chord position,
+        # NOT at the circumradius distance. With the rotation offset, the south-facing
+        # segment's inner chord is at Y = cy - apothem, where apothem = inner_r * cos(pi/sides).
+        # Using inner_radius directly would place the edge too far from center, creating a gap
+        # between the vestibule and the actual polygon wall.
+        apothem = inner_radius * math.cos(math.pi / sides)
+
         # Compute footprint edge based on room origin if provided
         # Otherwise fall back to polygon-relative calculation
         if room_origin is not None:
             ox, oy, oz = room_origin
-            # Use actual room boundaries for footprint edge
-            # The vestibule should extend to the room's edge (with wall overlap)
+            # Use actual room boundaries for footprint edge.
+            # The vestibule portal wall must sit at the OUTER footprint boundary
+            # (including wall thickness t) per §5.1. This ensures zero gap at
+            # the module boundary regardless of which hall type connects here.
+            # Previously, footprint_edge was set to the cell boundary (oy, oy+length)
+            # without t, relying on the connecting hall to provide overlap. This
+            # broke with WideCorner/SquareCorner whose geometry doesn't fill the gap.
             if 225 <= angle_deg <= 315:
-                # SOUTH facing - footprint edge at room's south cell boundary
-                polygon_inner_edge = cy - inner_radius
-                footprint_edge = oy  # Exactly at cell boundary (hall provides overlap)
+                # SOUTH facing - outer face at oy - t (footprint south edge)
+                polygon_inner_edge = cy - apothem
+                footprint_edge = oy - t
                 direction = 'SOUTH'
             elif 45 <= angle_deg <= 135:
-                # NORTH facing - footprint edge at room's north cell boundary
-                polygon_inner_edge = cy + inner_radius
-                # North edge = oy + room_length
+                # NORTH facing - outer face at oy + room_length + t (footprint north edge)
+                polygon_inner_edge = cy + apothem
                 if room_length is not None:
-                    footprint_edge = oy + room_length  # Exactly at cell boundary
+                    footprint_edge = oy + room_length + t
                 else:
                     # Fallback: derive from polygon center (cy = oy + length/2)
-                    footprint_edge = 2 * cy - oy
+                    footprint_edge = 2 * cy - oy + t
                 direction = 'NORTH'
             elif 135 < angle_deg < 225:
-                # WEST facing - footprint edge at room's west cell boundary
-                polygon_inner_edge = cx - inner_radius
-                # West edge = ox - half_width
+                # WEST facing - outer face at ox - half_width - t (footprint west edge)
+                polygon_inner_edge = cx - apothem
                 if room_width is not None:
-                    footprint_edge = ox - room_width / 2  # Exactly at cell boundary
+                    footprint_edge = ox - room_width / 2 - t
                 else:
                     footprint_edge = cx - radius - t  # Fallback
                 direction = 'WEST'
             else:
-                # EAST facing - footprint edge at room's east cell boundary
-                polygon_inner_edge = cx + inner_radius
+                # EAST facing - outer face at ox + half_width + t (footprint east edge)
+                polygon_inner_edge = cx + apothem
                 if room_width is not None:
-                    footprint_edge = ox + room_width / 2  # Exactly at cell boundary
+                    footprint_edge = ox + room_width / 2 + t
                 else:
                     footprint_edge = cx + radius + t  # Fallback
                 direction = 'EAST'
@@ -1501,22 +1617,22 @@ class GeometricPrimitive(ABC):
 
             if 225 <= angle_deg <= 315:
                 # SOUTH facing
-                polygon_inner_edge = cy - inner_radius
+                polygon_inner_edge = cy - apothem
                 footprint_edge = cy - footprint_margin
                 direction = 'SOUTH'
             elif 45 <= angle_deg <= 135:
                 # NORTH facing
-                polygon_inner_edge = cy + inner_radius
+                polygon_inner_edge = cy + apothem
                 footprint_edge = cy + footprint_margin
                 direction = 'NORTH'
             elif 135 < angle_deg < 225:
                 # WEST facing
-                polygon_inner_edge = cx - inner_radius
+                polygon_inner_edge = cx - apothem
                 footprint_edge = cx - footprint_margin
                 direction = 'WEST'
             else:
                 # EAST facing
-                polygon_inner_edge = cx + inner_radius
+                polygon_inner_edge = cx + apothem
                 footprint_edge = cx + footprint_margin
                 direction = 'EAST'
 
@@ -1580,35 +1696,30 @@ class GeometricPrimitive(ABC):
                 return None
 
         # Calculate clip zone bounds based on direction
-        # The clip zone MUST match the actual vestibule floor/ceiling footprint exactly
-        # Vestibule floor uses: vest_min_x - t to vest_max_x + t (where vest = cx ± (hw + t))
-        # So the vestibule floor X extent is: cx - hw - 2t to cx + hw + 2t
+        # The clip zone MUST match the actual vestibule floor/ceiling footprint.
+        # Portal-direction edge uses footprint_edge (not ±t) to match the
+        # vestibule floor/ceiling which don't extend past the footprint boundary.
         if direction == 'SOUTH':
-            # Vestibule extends from footprint_edge (south) to polygon_inner_edge (north)
-            # Floor X width includes extra t for side wall overlap on each side
             clip_min_x = self._snap_coord(cx - hw - t - t)  # vest_min_x - t
             clip_max_x = self._snap_coord(cx + hw + t + t)  # vest_max_x + t
-            clip_min_y = self._snap_coord(footprint_edge - t)
+            clip_min_y = self._snap_coord(footprint_edge)    # vest_min_y (no -t)
             clip_max_y = self._snap_coord(polygon_inner_edge)
 
         elif direction == 'NORTH':
-            # Vestibule extends from polygon_inner_edge (south) to footprint_edge (north)
             clip_min_x = self._snap_coord(cx - hw - t - t)  # vest_min_x - t
             clip_max_x = self._snap_coord(cx + hw + t + t)  # vest_max_x + t
             clip_min_y = self._snap_coord(polygon_inner_edge)
-            clip_max_y = self._snap_coord(footprint_edge + t)
+            clip_max_y = self._snap_coord(footprint_edge)    # vest_max_y (no +t)
 
         elif direction == 'WEST':
-            # Vestibule extends from footprint_edge (west) to polygon_inner_edge (east)
-            clip_min_x = self._snap_coord(footprint_edge - t)
+            clip_min_x = self._snap_coord(footprint_edge)    # vest_min_x (no -t)
             clip_max_x = self._snap_coord(polygon_inner_edge)
             clip_min_y = self._snap_coord(cy - hw - t - t)  # vest_min_y - t
             clip_max_y = self._snap_coord(cy + hw + t + t)  # vest_max_y + t
 
         else:  # EAST
-            # Vestibule extends from polygon_inner_edge (west) to footprint_edge (east)
             clip_min_x = self._snap_coord(polygon_inner_edge)
-            clip_max_x = self._snap_coord(footprint_edge + t)
+            clip_max_x = self._snap_coord(footprint_edge)    # vest_max_x (no +t)
             clip_min_y = self._snap_coord(cy - hw - t - t)  # vest_min_y - t
             clip_max_y = self._snap_coord(cy + hw + t + t)  # vest_max_y + t
 
@@ -1690,7 +1801,12 @@ class GeometricPrimitive(ABC):
         if room_height is None:
             room_height = portal_height + 40
 
-        return self._generate_portal_vestibule(
+        t = wall_thickness
+        tex = texture or self.params.texture
+        hw = portal_width / 2
+        h = room_height
+
+        brushes = self._generate_portal_vestibule(
             cx=cx, cy=cy,
             oz=oz,
             polygon_inner_edge=polygon_inner_edge,
@@ -1703,6 +1819,155 @@ class GeometricPrimitive(ABC):
             room_height=room_height,
             texture=texture
         )
+
+        # --- Rectangular seal shell ---
+        # The polygon floor/ceiling are bounding boxes that extend only to the
+        # polygon's vertex extent. For asymmetric footprints (e.g., GreatHall 4×6),
+        # the polygon radius is limited by the short dimension, leaving large gaps
+        # between the polygon BB and the footprint boundary where there's no
+        # floor or ceiling. We seal these gaps with:
+        # 1. Floor/ceiling slabs spanning the full seal extent
+        # 2. Axis-aligned walls at the seal boundary
+        # Overlap with polygon floor/ceiling and vestibule is fine for BSP.
+        if room_origin is not None and room_length is not None and room_width is not None:
+            ox, oy, _ = room_origin
+            hw_room = room_width / 2
+
+            # Compute the polygon floor bounding box extent (must match
+            # _generate_polygonal_floor's calculation)
+            angle_step = 2 * math.pi / sides
+            ext_radius = radius + t
+            bb_min_x, bb_max_x = float('inf'), float('-inf')
+            bb_min_y, bb_max_y = float('inf'), float('-inf')
+            for i in range(sides):
+                angle = i * angle_step - math.pi / 2 - angle_step / 2
+                bx = cx + ext_radius * math.cos(angle)
+                by = cy + ext_radius * math.sin(angle)
+                bb_min_x = min(bb_min_x, bx)
+                bb_max_x = max(bb_max_x, bx)
+                bb_min_y = min(bb_min_y, by)
+                bb_max_y = max(bb_max_y, by)
+            bb_min_x = self._snap_coord(bb_min_x)
+            bb_max_x = self._snap_coord(bb_max_x)
+            bb_min_y = self._snap_coord(bb_min_y)
+            bb_max_y = self._snap_coord(bb_max_y)
+
+            # Room footprint walls
+            fp_west = self._snap_coord(ox - hw_room - t)
+            fp_east = self._snap_coord(ox + hw_room + t)
+            fp_south = self._snap_coord(oy - t)
+            fp_north = self._snap_coord(oy + room_length + t)
+
+            # Use the OUTER extent of both footprint and bounding box to ensure
+            # complete coverage. Walls span from floor-t to ceiling+t.
+            seal_west = min(fp_west, bb_min_x)
+            seal_east = max(fp_east, bb_max_x)
+            seal_south = min(fp_south, bb_min_y)
+            seal_north = max(fp_north, bb_max_y)
+
+            # Seal shell floor and ceiling — span the full seal extent to
+            # cover gaps between the polygon BB and the footprint boundary.
+            # Critical for asymmetric footprints (e.g., GreatHall 4×6) where
+            # the polygon BB is much smaller than the footprint in one axis.
+            floor_tex = getattr(self, 'texture_floor', tex)
+            ceiling_tex = getattr(self, 'texture_ceiling', tex)
+            brushes.append(self._box(
+                seal_west, seal_south, oz - t,
+                seal_east, seal_north, oz,
+                floor_tex))
+            brushes.append(self._box(
+                seal_west, seal_south, oz + h,
+                seal_east, seal_north, oz + h + t,
+                ceiling_tex))
+
+            # Vestibule half-width: the vestibule side walls sit at
+            # cx/cy ± (portal_width/2 + t). We need this to know where
+            # the vestibule already seals vs where we need seal walls.
+            vest_hw = self._snap_coord(portal_width / 2 + t)
+
+            # Generate 4 walls at the seal boundary.
+            # For the portal direction: add two flanking segments outside
+            # the vestibule width (the vestibule itself seals the center).
+            # For the other 3 directions: add full solid walls.
+            # For the portal direction: generate two solid flanking walls
+            # that extend the full depth (seal_south to seal_north) and
+            # fill the space between the seal boundary and the vestibule.
+            # For the other 3 directions: full solid walls.
+            if direction == 'SOUTH':
+                # Left flank: seal_west to vestibule left edge, full Y depth
+                left_edge = self._snap_coord(cx - vest_hw)
+                right_edge = self._snap_coord(cx + vest_hw)
+                if seal_west < left_edge - 1:
+                    brushes.append(self._box(
+                        seal_west, seal_south, oz - t,
+                        left_edge, seal_north, oz + h + t,
+                        tex))
+                if right_edge < seal_east - 1:
+                    brushes.append(self._box(
+                        right_edge, seal_south, oz - t,
+                        seal_east, seal_north, oz + h + t,
+                        tex))
+            else:
+                brushes.append(self._box(
+                    seal_west, seal_south, oz - t,
+                    seal_east, seal_south + t, oz + h + t,
+                    tex))
+            if direction == 'NORTH':
+                left_edge = self._snap_coord(cx - vest_hw)
+                right_edge = self._snap_coord(cx + vest_hw)
+                if seal_west < left_edge - 1:
+                    brushes.append(self._box(
+                        seal_west, seal_south, oz - t,
+                        left_edge, seal_north, oz + h + t,
+                        tex))
+                if right_edge < seal_east - 1:
+                    brushes.append(self._box(
+                        right_edge, seal_south, oz - t,
+                        seal_east, seal_north, oz + h + t,
+                        tex))
+            else:
+                brushes.append(self._box(
+                    seal_west, seal_north - t, oz - t,
+                    seal_east, seal_north, oz + h + t,
+                    tex))
+            if direction == 'WEST':
+                left_edge = self._snap_coord(cy - vest_hw)
+                right_edge = self._snap_coord(cy + vest_hw)
+                if seal_south < left_edge - 1:
+                    brushes.append(self._box(
+                        seal_west, seal_south, oz - t,
+                        seal_east, left_edge, oz + h + t,
+                        tex))
+                if right_edge < seal_north - 1:
+                    brushes.append(self._box(
+                        seal_west, right_edge, oz - t,
+                        seal_east, seal_north, oz + h + t,
+                        tex))
+            else:
+                brushes.append(self._box(
+                    seal_west, seal_south, oz - t,
+                    seal_west + t, seal_north, oz + h + t,
+                    tex))
+            if direction == 'EAST':
+                left_edge = self._snap_coord(cy - vest_hw)
+                right_edge = self._snap_coord(cy + vest_hw)
+                if seal_south < left_edge - 1:
+                    brushes.append(self._box(
+                        seal_west, seal_south, oz - t,
+                        seal_east, left_edge, oz + h + t,
+                        tex))
+                if right_edge < seal_north - 1:
+                    brushes.append(self._box(
+                        seal_west, right_edge, oz - t,
+                        seal_east, seal_north, oz + h + t,
+                        tex))
+            else:
+                brushes.append(self._box(
+                    seal_east - t, seal_south, oz - t,
+                    seal_east, seal_north, oz + h + t,
+                    tex))
+
+        return brushes
 
     # ------------------------------------------------------------------
     # Polygonal solid generation for pillars and columns

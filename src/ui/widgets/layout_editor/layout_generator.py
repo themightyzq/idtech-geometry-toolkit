@@ -456,12 +456,19 @@ class LayoutGenerator:
         for mismatch in portal_mismatches:
             self._warnings.append(str(mismatch))
 
-        # Calculate spawn position (center of first primitive)
+        # Calculate spawn position (center of first primitive's full footprint)
+        # Must be at footprint center so the entity is inside polygonal rooms
         first_prim = next(iter(self._layout.primitives.values()))
         cell = first_prim.origin_cell
         grid_size = self._layout.grid_size
-        spawn_x = cell.x * grid_size + grid_size / 2
-        spawn_y = cell.y * grid_size + grid_size / 2
+        footprint = first_prim.footprint or PRIMITIVE_FOOTPRINTS.get(first_prim.primitive_type)
+        if footprint:
+            fp_w, fp_d = footprint.rotated_size(first_prim.rotation)
+            spawn_x = (cell.x + fp_w / 2) * grid_size
+            spawn_y = (cell.y + fp_d / 2) * grid_size
+        else:
+            spawn_x = cell.x * grid_size + grid_size / 2
+            spawn_y = cell.y * grid_size + grid_size / 2
         spawn_z = first_prim.z_offset + 32  # 32 units above floor
         spawn_position = (spawn_x, spawn_y, spawn_z)
 
@@ -734,6 +741,10 @@ class LayoutGenerator:
             for key, value in params.items():
                 if key.startswith('_') and hasattr(instance, key):
                     setattr(instance, key, value)
+
+            # Override class-level constants that apply_params doesn't handle
+            if 'WALL_THICKNESS' in params:
+                instance.WALL_THICKNESS = params['WALL_THICKNESS']
 
             # Set surface textures from TEXTURE_SETTINGS (same as Module Mode)
             # These are internal attributes that control per-surface texturing
@@ -1057,6 +1068,7 @@ class LayoutGenerator:
             # and the hall ceiling, causing BSP leaks. Force tomb_height to 128
             # to match hall height in layout mode.
             set_if_not_user('tomb_height', 128)
+            set_if_not_user('shell_sides', 4)  # Force rectangular — multi-portal room
 
         elif ptype == 'Tower':
             # Tower: uses tower_radius (octagonal approximation)
@@ -1064,9 +1076,8 @@ class LayoutGenerator:
             # Room t=16: radius = footprint/2 - t
             # Radius should fit within the footprint, so use half the smaller dimension
             set_if_not_user('tower_radius', min(fp_width, fp_depth) * grid_size / 2 - 16)
-            # Tower default tower_height (384) exceeds hall_height (128).
-            # Force to 128 to prevent BSP leaks at portal boundaries.
-            set_if_not_user('tower_height', 128)
+            # Tower default tower_height (768) — use 256 in layout mode.
+            set_if_not_user('tower_height', 256)
             # Portal alignment handled by systemic post-rotation correction
 
         elif ptype == 'Chamber':
@@ -1089,14 +1100,15 @@ class LayoutGenerator:
         elif ptype == 'GreatHall':
             # GreatHall: width is half-width, length is depth
             # Footprint: 4x6 cells = 512 x 768 units
-            # GreatHall adds fireplace alcove (48 units) + wall thickness (2*16=32)
-            # Total depth = length + 80, so length = footprint_depth - 80
-            # Also disable random scaling to ensure consistent footprint fit
+            # Disable fireplace in layout mode: it creates an asymmetric Y extent
+            # (48-unit alcove beyond back wall) that complicates portal offset math
+            # at non-zero rotations, and produces non-integer Z coords (nh*0.6).
             t = 16  # wall thickness
             hw = (fp_width * grid_size) / 2 - t
-            nl = fp_depth * grid_size - 80  # Subtract for fireplace+walls
+            nl = fp_depth * grid_size - 2 * t  # Standard room formula (no fireplace)
             set_if_not_user('width', hw)
             set_if_not_user('length', nl)
+            set_if_not_user('fireplace', False)  # Disable in layout mode
             set_if_not_user('random_seed', 1)  # Fixed seed to disable random variance
             # GreatHall default height (192) exceeds hall_height (128).
             # Force to 128 to prevent BSP leaks at portal boundaries.
@@ -1106,8 +1118,20 @@ class LayoutGenerator:
             # We can't use systemic correction (whole-room shift) because the portals
             # are on different walls. Instead, we compute offsets for each portal.
             #
-            # After normalization, room spans X = 0 to footprint_width, Y = 0 to footprint_depth.
-            # Room center after normalization is at (fp_width*grid_size/2, fp_depth*grid_size/2).
+            # Portal offset derivation (see CLAUDE.md §10.1):
+            # After generate(), the room is rotated and normalized. The normalization
+            # shifts all coordinates so the bounding box starts at (0,0).
+            #
+            # For the entrance (SOUTH wall, local X axis, symmetric about 0):
+            #   Local X range: [-(hw+t), hw+t]. After any rotation + normalize,
+            #   the mapping is either DIRECT (world_pos = local_X + hw+t) or
+            #   INVERSE (world_pos = -local_X + hw+t).
+            #   DIRECT: rot=0 (SOUTH), rot=270 (EAST). INVERSE: rot=90 (WEST), rot=180 (NORTH).
+            #
+            # For the side portal (EAST wall, local Y axis):
+            #   Local Y range: [-t, nl+t]. After rotation + normalize,
+            #   DIRECT: world_pos = local_Y + t (rot=0, rot=90)
+            #   INVERSE: world_pos = (nl+t) - local_Y (rot=180, rot=270)
             fp_w, fp_d = footprint.rotated_size(prim.rotation)
 
             # ENTRANCE PORTAL: on SOUTH (front) wall, varies along X
@@ -1124,7 +1148,7 @@ class LayoutGenerator:
                     target_x = (rotated_cell.x + 0.5) * grid_size
                     norm_center_x = (fp_w * grid_size) / 2
                     offset = target_x - norm_center_x
-                    # At 180° rotation, local X is inverted from world X, so negate offset
+                    # INVERSE mapping at rot=180: negate offset
                     if prim.rotation == 180:
                         offset = -offset
                     params['_entrance_x_offset'] = offset
@@ -1132,9 +1156,11 @@ class LayoutGenerator:
                     # After rotation, entrance is on EAST/WEST wall, varies along Y
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    # For 90/270 rotation, X offset affects the rotated position
-                    # The entrance_x_offset in local coords maps to Y after rotation
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    # INVERSE mapping at rot=90 (entrance→WEST): negate offset
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # SIDE PORTAL: on EAST (right) wall, varies along Y
             side_portal = next((p for p in footprint.portals if p.id == 'side'), None)
@@ -1146,25 +1172,16 @@ class LayoutGenerator:
                 rotated_dir = side_portal.rotated_direction(prim.rotation)
 
                 if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
-                    # Side portal varies along Y axis
                     target_y = (rotated_cell.y + 0.5) * grid_size
-                    # Room generates side portal at nl/2 in local coords
-                    # After normalization (shift by t due to floor extension), portal Y = nl/2 + t
-                    norm_portal_y = nl / 2 + t
-                    offset = target_y - norm_portal_y
-                    # Note: rotated_cell already accounts for rotation, so no negation needed
-                    params['_side_y_offset'] = offset
                 else:
-                    # After rotation (90 or 270), side is on SOUTH/NORTH wall, varies along X
-                    target_x = (rotated_cell.x + 0.5) * grid_size
-                    # In local coords, nl/2 is the side portal Y position
-                    # After 90° rotation: local Y -> world X (inverted)
-                    # After 270° rotation: local Y -> world X
-                    norm_center = (fp_d * grid_size) / 2
-                    if prim.rotation == 90:
-                        params['_side_y_offset'] = norm_center - target_x - (nl / 2)
-                    else:  # rotation == 270
-                        params['_side_y_offset'] = target_x - (nl / 2 + t)
+                    target_y = (rotated_cell.x + 0.5) * grid_size
+
+                # DIRECT mapping (rot=0, rot=90): world_pos = (nl/2 + offset) + t
+                # INVERSE mapping (rot=180, rot=270): world_pos = (nl + t) - (nl/2 + offset)
+                if prim.rotation in (0, 90):
+                    params['_side_y_offset'] = target_y - nl / 2 - t
+                else:
+                    params['_side_y_offset'] = nl / 2 + t - target_y
 
         elif ptype == 'Prison':
             # Prison (formerly Dungeon): width is half-width, length is depth
@@ -1195,13 +1212,16 @@ class LayoutGenerator:
             set_if_not_user('length', fp_depth * grid_size - 32)
 
         elif ptype == 'Stronghold':
-            # Stronghold (formerly Keep): larger fortified room with EXTRA THICK WALLS (t=32)
+            # Stronghold (formerly Keep): larger fortified room
             # Footprint: 5x5 cells = 640 x 640 units
-            # Stronghold uses width as half-width, wall_thickness=32 (not 16!)
-            # Room t=32: width = footprint/2 - t, length = footprint - 2*t
-            t = 32  # Stronghold uses extra thick walls for defense
-            set_if_not_user('width', (fp_width * grid_size) / 2 - t)   # = 640/2 - 32 = 288
-            set_if_not_user('length', fp_depth * grid_size - 2*t)      # = 640 - 64 = 576
+            # Force wall_thickness=16 in layout mode to match hall wall thickness.
+            # Stronghold defaults to t=32 (extra thick), but in layout mode the
+            # vestibule floor t-extension must match the connecting hall's t=16.
+            # If t != 16, the vestibule pushes the portal wall inward after
+            # normalization, creating a gap with the hall wall.
+            set_if_not_user('wall_thickness', 16)
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)   # = 640/2 - 16 = 304
+            set_if_not_user('length', fp_depth * grid_size - 32)         # = 640 - 32 = 608
             # Stronghold default (3 levels * 128 = 384) exceeds hall_height (128).
             # Force to 1 level to prevent BSP leaks at portal boundaries.
             set_if_not_user('levels', 1)
@@ -1239,10 +1259,12 @@ class LayoutGenerator:
         elif ptype == 'Vault':
             # Vault: secure storage with thick walls
             # Footprint: 3x2 cells = 384 x 256 units
-            # Room t=24 (extra thick): width = footprint/2 - t, length = footprint - 2*t
-            t = 24  # Vault uses extra thick walls
-            set_if_not_user('width', (fp_width * grid_size) / 2 - t)
-            set_if_not_user('length', fp_depth * grid_size - 2*t)
+            # Force WALL_THICKNESS=16 in layout mode to match hall wall thickness.
+            # Vault defaults to WALL_THICKNESS=24 (extra thick), but in layout mode
+            # the vestibule floor t-extension must match the connecting hall's t=16.
+            params['WALL_THICKNESS'] = 16  # Override class constant (applied after apply_params)
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
 
         elif ptype == 'Barracks':
             # Barracks: sleeping quarters with bed alcoves
@@ -1312,6 +1334,7 @@ class LayoutGenerator:
             set_if_not_user('length', nl)
             set_if_not_user('has_pillars', False)  # Disable pillars in layout mode
             set_if_not_user('central_well', False)
+            set_if_not_user('shell_sides', 4)  # Force rectangular — multi-portal room
 
             # MULTI-PORTAL ROOM: Antechamber has entrance (SOUTH), exit (NORTH),
             # side_east (EAST), and side_west (WEST) portals.
@@ -1337,7 +1360,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # EXIT PORTAL: on NORTH wall, varies along X (same axis as entrance)
             exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
@@ -1358,7 +1384,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_exit_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
 
             # SIDE PORTALS: on EAST/WEST walls, vary along Y
             # Both side_east and side_west are at the same Y cell row,
@@ -1372,17 +1401,15 @@ class LayoutGenerator:
                 rotated_dir = side_portal.rotated_direction(prim.rotation)
 
                 if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
-                    target_y = (rotated_cell.y + 0.5) * grid_size
-                    norm_portal_y = nl / 2 + t
-                    offset = target_y - norm_portal_y
-                    params['_side_y_offset'] = offset
+                    target = (rotated_cell.y + 0.5) * grid_size
                 else:
-                    target_x = (rotated_cell.x + 0.5) * grid_size
-                    norm_center = (fp_d * grid_size) / 2
-                    if prim.rotation == 90:
-                        params['_side_y_offset'] = norm_center - target_x - (nl / 2)
-                    else:  # rotation == 270
-                        params['_side_y_offset'] = target_x - (nl / 2 + t)
+                    target = (rotated_cell.x + 0.5) * grid_size
+                # DIRECT mapping (rot=0, rot=90): world = nl/2 + offset + t
+                # INVERSE mapping (rot=180, rot=270): world = nl/2 + 2t - offset
+                if prim.rotation in (0, 90):
+                    params['_side_y_offset'] = target - nl / 2 - t
+                else:
+                    params['_side_y_offset'] = nl / 2 + t - target
 
         elif ptype == 'Hub':
             # Hub: central room with 4 portals (SOUTH, NORTH, EAST, WEST)
@@ -1419,7 +1446,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # EXIT PORTAL: on NORTH wall, varies along X (same axis as entrance)
             exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
@@ -1440,7 +1470,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_exit_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
 
             # SIDE PORTALS: on EAST/WEST walls, vary along Y
             side_portal = next((p for p in footprint.portals if p.id == 'side_east'), None)
@@ -1452,17 +1485,15 @@ class LayoutGenerator:
                 rotated_dir = side_portal.rotated_direction(prim.rotation)
 
                 if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
-                    target_y = (rotated_cell.y + 0.5) * grid_size
-                    norm_portal_y = nl / 2 + t
-                    offset = target_y - norm_portal_y
-                    params['_side_y_offset'] = offset
+                    target = (rotated_cell.y + 0.5) * grid_size
                 else:
-                    target_x = (rotated_cell.x + 0.5) * grid_size
-                    norm_center = (fp_d * grid_size) / 2
-                    if prim.rotation == 90:
-                        params['_side_y_offset'] = norm_center - target_x - (nl / 2)
-                    else:  # rotation == 270
-                        params['_side_y_offset'] = target_x - (nl / 2 + t)
+                    target = (rotated_cell.x + 0.5) * grid_size
+                # DIRECT mapping (rot=0, rot=90): world = nl/2 + offset + t
+                # INVERSE mapping (rot=180, rot=270): world = nl/2 + 2t - offset
+                if prim.rotation in (0, 90):
+                    params['_side_y_offset'] = target - nl / 2 - t
+                else:
+                    params['_side_y_offset'] = nl / 2 + t - target
 
         # === NEW ARCHETYPE ROOMS ===
 
@@ -1505,7 +1536,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # EXIT PORTAL: on NORTH wall, varies along X
             exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
@@ -1526,7 +1560,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_exit_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
 
         elif ptype == 'Processional':
             # Processional: 2x4 through-passage with colonnade
@@ -1558,7 +1595,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
             if exit_portal:
@@ -1578,7 +1618,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_exit_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
 
         elif ptype == 'DoglegRoom':
             # DoglegRoom: 3x3 L-shaped room
@@ -1611,7 +1654,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # EXIT PORTAL: on EAST wall, varies along Y
             exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
@@ -1767,7 +1813,10 @@ class LayoutGenerator:
                 else:
                     target_y = (rotated_cell.y + 0.5) * grid_size
                     norm_center_y = (fp_d * grid_size) / 2
-                    params['_entrance_x_offset'] = target_y - norm_center_y
+                    offset = target_y - norm_center_y
+                    if prim.rotation == 90:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
 
             # UPPER PORTAL: on NORTH wall, varies along X
             # Upper portal uses the same _entrance_x_offset since both portals

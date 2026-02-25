@@ -80,7 +80,7 @@ _MODULE_DEFAULT_HEIGHTS = {
     'SquareCorner': 128, 'WideCorner': 128, 'VerticalStairHall': 128,
     'NarrowPassage': 128, 'WideCorridor': 128,
     # Standard rooms
-    'Sanctuary': 192, 'Tomb': 96, 'Tower': 384, 'Chamber': 128,
+    'Sanctuary': 192, 'Tomb': 96, 'Tower': 768, 'Chamber': 128,
     'Storage': 112, 'GreatHall': 192, 'Prison': 96, 'Armory': 128,
     'Cistern': 128, 'Stronghold': 384, 'Courtyard': 192, 'Arena': 128,
     'Laboratory': 128, 'Vault': 112, 'Barracks': 112, 'Shrine': 112,

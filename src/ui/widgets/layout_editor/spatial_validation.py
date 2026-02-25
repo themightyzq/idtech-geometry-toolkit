@@ -45,7 +45,7 @@ PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
     # Most rooms use height=128 and t=16
     'Sanctuary': (192.0, 'nave_height', 16.0),  # Nave is taller
     'Tomb': (128.0, 'height', 16.0),
-    'Tower': (256.0, 'height', 16.0),  # Towers are tall
+    'Tower': (768.0, 'tower_height', 16.0),  # Towers are tall
     'Chamber': (128.0, 'height', 16.0),
     'Storage': (128.0, 'height', 16.0),
     'GreatHall': (192.0, 'height', 16.0),  # Great halls are taller
