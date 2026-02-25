@@ -38,12 +38,13 @@ def _debug(msg: str):
 # Primitive types by category
 # NOTE: These must match the keys in PRIMITIVE_FOOTPRINTS (palette_widget.py)
 # and the display names from the primitive catalog (catalog.py)
-HALL_TYPES = ['StraightHall', 'TJunction', 'Crossroads', 'SquareCorner']
+HALL_TYPES = ['StraightHall', 'TJunction', 'Crossroads', 'SquareCorner', 'WideCorner', 'NarrowPassage', 'WideCorridor']
 ROOM_TYPES = [
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage', 'GreatHall',
     'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
-    'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
+    'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum', 'Hub',
+    'ThroneRoom', 'Vestibule', 'Processional', 'DoglegRoom',
     # Multi-Floor Rooms (8 rooms with internal upper portals and stairs)
     'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
     'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
@@ -245,6 +246,8 @@ def generate_random_layout(
     exclude_tall: bool = False,
     require_stair_space: bool = False,
     exclude_multi_floor: bool = False,
+    corridor_width: Optional[str] = None,
+    max_shortcuts: int = 0,
 ) -> Tuple[DungeonLayout, int]:
     """
     Generate a random dungeon layout with connected halls and rooms.
@@ -263,6 +266,7 @@ def generate_random_layout(
         exclude_tall: If True, exclude tall rooms (Tower, Sanctuary, etc.) for multi-floor layouts
         require_stair_space: If True, stop generation early if no stair-friendly portals remain
         exclude_multi_floor: If True, exclude multi-floor rooms (for non-top floors)
+        corridor_width: Hall selection bias: 'narrow', 'wide', or None (mixed)
 
     Returns:
         Tuple of (DungeonLayout, actual_seed_used)
@@ -286,7 +290,7 @@ def generate_random_layout(
     center_x = map_width // 2
     center_y = map_height // 2
 
-    start_type = random.choice(['Crossroads', 'TJunction'])
+    start_type = random.choice(['Crossroads', 'TJunction', 'Hub'])
     _debug(f"[RANDOM_LAYOUT] Placing start primitive: {start_type} at ({center_x}, {center_y})")
     start_prim = _place_primitive(layout, start_type, CellCoord(center_x, center_y), 0, occupied_cells, param_rng)
     if start_prim:
@@ -345,7 +349,7 @@ def generate_random_layout(
             # Place a hall
             # Prefer junctions when few open portals remain (ensures stair placement options)
             prefer_junctions = len(open_portals) < 4
-            prim_type = _select_hall_type(complexity, preferred_hall_types, prefer_junctions)
+            prim_type = _select_hall_type(complexity, preferred_hall_types, prefer_junctions, corridor_width=corridor_width)
             _debug(f"[RANDOM_LAYOUT] Trying to place HALL: {prim_type}")
 
         # Find valid position and rotation for the new primitive
@@ -437,6 +441,11 @@ def generate_random_layout(
     _debug(f"[RANDOM_LAYOUT] Total primitives: {len(layout.primitives)}")
     _debug(f"[RANDOM_LAYOUT] Total connections: {len(layout.connections)}")
     _debug(f"[RANDOM_LAYOUT] Iterations used: {iterations}")
+
+    # Create shortcut loops to break tree topology
+    if max_shortcuts > 0:
+        _create_shortcut_loops(layout, max_shortcuts, occupied_cells, map_width, map_height)
+
     return layout, seed
 
 
@@ -490,19 +499,29 @@ def _select_room_type(
 
 
 def _select_hall_type(complexity: int, preferred: Optional[List[str]] = None,
-                       prefer_junctions: bool = False) -> str:
+                       prefer_junctions: bool = False,
+                       corridor_width: Optional[str] = None) -> str:
     """Select a hall type based on complexity and preferences.
 
     Args:
         complexity: Layout complexity (1-5)
         preferred: Preferred hall types to use
         prefer_junctions: If True, prefer TJunction/Crossroads to create more open portals
+        corridor_width: Hall width bias: 'narrow', 'wide', or None (mixed)
     """
     # Use preferred types if provided and valid
     if preferred:
         valid_preferred = [h for h in preferred if h in HALL_TYPES]
         if valid_preferred:
             return random.choice(valid_preferred)
+
+    # Apply corridor_width bias if specified
+    if corridor_width == 'narrow':
+        choices = ['NarrowPassage', 'NarrowPassage', 'StraightHall', 'SquareCorner']
+        return random.choice(choices)
+    elif corridor_width == 'wide':
+        choices = ['WideCorridor', 'WideCorridor', 'StraightHall', 'TJunction']
+        return random.choice(choices)
 
     # When prefer_junctions is True, bias toward multi-portal halls
     if prefer_junctions:
@@ -517,6 +536,123 @@ def _select_hall_type(complexity: int, preferred: Optional[List[str]] = None,
     else:
         choices = HALL_TYPES
     return random.choice(choices)
+
+
+def _create_shortcut_loops(
+    layout: DungeonLayout,
+    max_shortcuts: int,
+    occupied: Set[Tuple[int, int]],
+    map_width: int,
+    map_height: int,
+) -> int:
+    """Create shortcut connections between adjacent modules with unused facing portals.
+
+    After the main generation loop produces a tree topology, this scans for pairs of
+    placed primitives that have unused portals facing each other across a shared cell
+    boundary. Connecting these creates loops that give players alternate routes.
+
+    Args:
+        layout: The generated layout to add shortcuts to
+        max_shortcuts: Maximum number of shortcut connections to create
+        occupied: Set of occupied (x, y) cell tuples
+        map_width: Grid width
+        map_height: Grid height
+
+    Returns:
+        Number of shortcuts actually created
+    """
+    if max_shortcuts <= 0:
+        return 0
+
+    # Build a set of already-connected (primitive_id, portal_id) pairs
+    connected_portals: Set[Tuple[str, str]] = set()
+    for conn in layout.connections:
+        connected_portals.add((conn.primitive_a_id, conn.portal_a_id))
+        connected_portals.add((conn.primitive_b_id, conn.portal_b_id))
+
+    # Map: (cell_x, cell_y, direction) -> (prim_id, portal_id)
+    # direction is the direction the portal faces OUT from the module
+    unused_portals: dict = {}
+
+    for prim in layout.primitives.values():
+        footprint = PRIMITIVE_FOOTPRINTS.get(prim.primitive_type)
+        if footprint is None:
+            continue
+
+        for portal in footprint.portals:
+            if (prim.id, portal.id) in connected_portals:
+                continue  # Already connected
+
+            # Compute world cell and direction of this portal
+            world_cell = portal.world_cell(
+                prim.origin_cell, prim.rotation,
+                footprint.width_cells, footprint.depth_cells
+            )
+            world_dir = portal.rotated_direction(prim.rotation)
+
+            key = (world_cell.x, world_cell.y, world_dir)
+            unused_portals[key] = (prim.id, portal.id)
+
+    # Find matching pairs: portal A facing NORTH at (x, y) matches portal B facing SOUTH at (x, y+1)
+    # Direction opposites: NORTH<->SOUTH, EAST<->WEST
+    shortcuts_created = 0
+    used_prims: Set[str] = set()  # Don't create multiple shortcuts on the same primitive
+
+    direction_opposites = {
+        PortalDirection.NORTH: PortalDirection.SOUTH,
+        PortalDirection.SOUTH: PortalDirection.NORTH,
+        PortalDirection.EAST: PortalDirection.WEST,
+        PortalDirection.WEST: PortalDirection.EAST,
+    }
+
+    neighbor_offsets = {
+        PortalDirection.NORTH: (0, 1),
+        PortalDirection.SOUTH: (0, -1),
+        PortalDirection.EAST: (1, 0),
+        PortalDirection.WEST: (-1, 0),
+    }
+
+    # Collect all candidate pairs, then shuffle for randomness
+    candidates = []
+    for (cx, cy, direction), (prim_a_id, portal_a_id) in unused_portals.items():
+        opposite = direction_opposites[direction]
+        dx, dy = neighbor_offsets[direction]
+        neighbor_key = (cx + dx, cy + dy, opposite)
+
+        if neighbor_key in unused_portals:
+            prim_b_id, portal_b_id = unused_portals[neighbor_key]
+            if prim_a_id != prim_b_id:  # Don't connect a module to itself
+                # Normalize pair to avoid duplicates (A->B == B->A)
+                pair = tuple(sorted([(prim_a_id, portal_a_id), (prim_b_id, portal_b_id)]))
+                candidates.append(pair)
+
+    # Deduplicate
+    candidates = list(set(candidates))
+    random.shuffle(candidates)
+
+    for (prim_a_id, portal_a_id), (prim_b_id, portal_b_id) in candidates:
+        if shortcuts_created >= max_shortcuts:
+            break
+        if prim_a_id in used_prims or prim_b_id in used_prims:
+            continue
+
+        # Create the connection
+        conn = Connection(
+            primitive_a_id=prim_a_id,
+            portal_a_id=portal_a_id,
+            primitive_b_id=prim_b_id,
+            portal_b_id=portal_b_id,
+        )
+        layout.connections.append(conn)
+        used_prims.add(prim_a_id)
+        used_prims.add(prim_b_id)
+        shortcuts_created += 1
+
+        _debug(f"[SHORTCUT] Created shortcut #{shortcuts_created}: "
+               f"{prim_a_id[:8]}:{portal_a_id} <-> {prim_b_id[:8]}:{portal_b_id}")
+
+    _debug(f"[SHORTCUT] Total shortcuts created: {shortcuts_created}/{max_shortcuts}")
+    return shortcuts_created
 
 
 def _place_primitive(
@@ -1397,6 +1533,8 @@ def generate_multi_floor_layout(
     min_hall_between_rooms: int = 1,
     allow_dead_ends: bool = True,
     max_retry_attempts: int = 3,
+    corridor_width: Optional[str] = None,
+    max_shortcuts: int = 0,
 ) -> Tuple[DungeonLayout, int]:
     """
     Generate a multi-floor dungeon layout with optional automatic stair connections.
@@ -1420,6 +1558,8 @@ def generate_multi_floor_layout(
         min_hall_between_rooms: Minimum halls between consecutive rooms
         allow_dead_ends: Whether to allow dead-end corridors
         max_retry_attempts: Maximum number of retry attempts if stair placement fails
+        corridor_width: Hall width bias: 'narrow', 'wide', or None (mixed)
+        max_shortcuts: Maximum number of shortcut loop connections per floor
 
     Returns:
         Tuple of (DungeonLayout, actual_seed_used)
@@ -1504,6 +1644,8 @@ def generate_multi_floor_layout(
                 exclude_tall=True,  # Multi-floor: exclude tall rooms to prevent collisions
                 require_stair_space=needs_stair_space,
                 exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                corridor_width=corridor_width,
+                max_shortcuts=max_shortcuts,
             )
 
             # Track occupied cells
@@ -1577,6 +1719,7 @@ def generate_multi_floor_layout(
                         require_stair_space=needs_stair_space,
                         start_portal_id=upper_portal_id,  # Specify the portal to connect
                         exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                        corridor_width=corridor_width,
                     )
 
                     # Update occupied cells for this floor
@@ -1659,6 +1802,7 @@ def generate_multi_floor_layout(
                             combined_layout=combined_layout,
                             require_stair_space=needs_stair_space,
                             exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                            corridor_width=corridor_width,
                         )
 
                         # VERIFY: Check that both stair portals are connected
@@ -1753,6 +1897,8 @@ def generate_multi_floor_layout(
                             exclude_tall=True,  # Multi-floor: exclude tall rooms
                             require_stair_space=needs_stair_space,
                             exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                            corridor_width=corridor_width,
+                            max_shortcuts=max_shortcuts,
                         )
 
                         for prim in floor_layout.primitives.values():
@@ -1807,6 +1953,8 @@ def generate_multi_floor_layout(
                     exclude_tall=True,  # Multi-floor: exclude tall rooms
                     require_stair_space=needs_stair_space,
                     exclude_multi_floor=not is_top_floor,  # Exclude multi-floor rooms from non-top floors
+                    corridor_width=corridor_width,
+                    max_shortcuts=max_shortcuts,
                 )
 
                 for prim in floor_layout.primitives.values():
@@ -2811,6 +2959,7 @@ def _generate_floor_from_portal(
     require_stair_space: bool = False,
     start_portal_id: str = 'top',  # Portal ID to connect to (default 'top' for VerticalStairHall)
     exclude_multi_floor: bool = False,  # Exclude multi-floor rooms (for non-top floors)
+    corridor_width: Optional[str] = None,
 ) -> DungeonLayout:
     """
     Generate a floor layout starting from a specific portal.
@@ -2842,9 +2991,9 @@ def _generate_floor_from_portal(
     adjacent_cell = start_portal_cell.neighbor(start_portal_dir)
     required_dir = start_portal_dir.opposite()
 
-    # Start with a junction (Crossroads/TJunction) to maximize open portals
+    # Start with a junction (Crossroads/TJunction/Hub) to maximize open portals
     # This ensures the floor can branch out from the stair
-    start_type = random.choice(['Crossroads', 'TJunction', 'Crossroads'])
+    start_type = random.choice(['Crossroads', 'TJunction', 'Hub'])
 
     # Find placement for starting primitive
     result = _find_placement(
@@ -3002,7 +3151,7 @@ def _generate_floor_from_portal(
             if len(layout.primitives) < 4:
                 prim_type = random.choice(['Crossroads', 'TJunction', 'TJunction'])
             else:
-                prim_type = _select_hall_type(complexity, preferred_hall_types)
+                prim_type = _select_hall_type(complexity, preferred_hall_types, corridor_width=corridor_width)
 
         # Find placement
         result = _find_placement(

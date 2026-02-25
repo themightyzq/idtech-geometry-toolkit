@@ -18,8 +18,8 @@ CRYPT_TEMPLATE = GenerationTemplate(
     corridor_width=64,
 
     # Generation hints
-    preferred_room_types=['Tomb', 'Ossuary', 'Shrine', 'Pit', 'Storage', 'Chamber'],
-    preferred_hall_types=['StraightHall', 'SquareCorner', 'SquareCorner'],
+    preferred_room_types=['Tomb', 'Ossuary', 'Shrine', 'Pit', 'Storage', 'Chamber', 'Vestibule', 'DoglegRoom'],
+    preferred_hall_types=['StraightHall', 'SquareCorner', 'SquareCorner', 'NarrowPassage'],
     room_probability=0.4,
     min_hall_between_rooms=1,
     allow_dead_ends=True,

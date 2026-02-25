@@ -15,10 +15,11 @@ from .rooms import (
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
     Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
     Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,
-    Gatehouse, Sewer, Ossuary, Cloister, Colosseum
+    Gatehouse, Sewer, Ossuary, Cloister, Colosseum, Hub,
+    ThroneRoom, Vestibule, Processional, DoglegRoom,
 )
 from .connective import Bridge, Platform, Rampart, Gallery
-from .halls import StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall
+from .halls import StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, NarrowPassage, WideCorridor, WideCorner
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,10 @@ for _cls in [
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
     Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
     Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,
-    Gatehouse, Sewer, Ossuary, Cloister, Colosseum,
+    Gatehouse, Sewer, Ossuary, Cloister, Colosseum, Hub,
+    ThroneRoom, Vestibule, Processional, DoglegRoom,
     Bridge, Platform, Rampart, Gallery,
     StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall,
+    NarrowPassage, WideCorridor, WideCorner,
 ]:
     PRIMITIVE_CATALOG.register(_cls)

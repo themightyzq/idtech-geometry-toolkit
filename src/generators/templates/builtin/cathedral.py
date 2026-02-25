@@ -15,12 +15,13 @@ CATHEDRAL_TEMPLATE = GenerationTemplate(
     map_height=45,
     room_count=8,
     complexity=4,
-    corridor_width=96,
+    corridor_width=128,
 
     # Generation hints
-    preferred_room_types=['Sanctuary', 'Cloister', 'GreatHall', 'Tomb', 'Shrine', 'Cistern'],
-    preferred_hall_types=['StraightHall', 'StraightHall', 'StraightHall', 'TJunction'],
+    preferred_room_types=['Sanctuary', 'Cloister', 'GreatHall', 'Tomb', 'Shrine', 'Cistern', 'Hub', 'Processional', 'ThroneRoom'],
+    preferred_hall_types=['StraightHall', 'StraightHall', 'WideCorridor', 'WideCorner', 'TJunction'],
     room_probability=0.45,
     min_hall_between_rooms=1,
     allow_dead_ends=True,
+    max_shortcuts=1,
 )

@@ -11321,3 +11321,1029 @@ class Colosseum(GeometricPrimitive):
             )
 
         return brushes
+
+
+class Hub(GeometricPrimitive):
+    """Central hub room with 4 cardinal portals.
+
+    Features:
+    - 3x3 footprint room with N, S, E, W portals
+    - Open interior space for navigation crossroads
+    - Optional center feature: pillars, raised platform, or sunken pit
+    - Follows Antechamber multi-portal pattern
+    - 100% sealed geometry
+
+    Designed as a larger multi-portal junction room (room-scale alternative
+    to Crossroads hall). Portals at cell centers: N(1,2), S(1,0), E(2,1), W(0,1).
+    """
+
+    width: float = 176.0        # Half-width (3 cells * 128 / 2 - 2*16 = 176)
+    length: float = 352.0       # Length (3 cells * 128 - 2*16 = 352)
+    height: float = 128.0       # Ceiling height
+    shell_sides: int = 4        # Number of sides (4=square)
+    random_seed: int = 0
+
+    # Portal control - 4 cardinal portals
+    has_entrance: bool = True       # South (front)
+    has_exit: bool = True           # North (back)
+    has_side_east: bool = True      # East
+    has_side_west: bool = True      # West
+
+    # Center feature
+    center_feature: str = "none"    # none, pillars, platform, pit
+    pillar_style: str = "square"    # square, hexagonal, octagonal, round
+
+    _entrance_x_offset: float = 0.0
+    _exit_x_offset: float = 0.0
+    _side_y_offset: float = 0.0
+
+    WALL_THICKNESS: float = 16.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Hub"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Rooms"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        return {
+            "width": {
+                "type": "float", "default": 176.0, "min": 128, "max": 256, "label": "Half-Width",
+                "description": "Half-width of the hub from center to walls"
+            },
+            "length": {
+                "type": "float", "default": 352.0, "min": 256, "max": 512, "label": "Length",
+                "description": "Total length from south to north wall"
+            },
+            "height": {
+                "type": "float", "default": 128.0, "min": 96, "max": 192, "label": "Ceiling Height",
+                "description": "Height from floor to ceiling (player is 56 units tall)"
+            },
+            "shell_sides": {
+                "type": "int", "default": 4, "min": 3, "max": 16, "label": "Shell Sides",
+                "description": "Number of sides for room shape (4=square, 6=hex, 8=octagon)"
+            },
+            "has_entrance": {
+                "type": "bool", "default": True, "label": "South Portal",
+                "description": "Create portal opening in the south (front) wall"
+            },
+            "has_exit": {
+                "type": "bool", "default": True, "label": "North Portal",
+                "description": "Create portal opening in the north (back) wall"
+            },
+            "has_side_east": {
+                "type": "bool", "default": True, "label": "East Portal",
+                "description": "Create portal opening in the east (right) wall"
+            },
+            "has_side_west": {
+                "type": "bool", "default": True, "label": "West Portal",
+                "description": "Create portal opening in the west (left) wall"
+            },
+            "center_feature": {
+                "type": "choice", "default": "none",
+                "choices": ["none", "pillars", "platform", "pit"],
+                "label": "Center Feature",
+                "description": "Optional feature in the center of the hub"
+            },
+            "pillar_style": {
+                "type": "choice", "default": "square",
+                "choices": ["square", "hexagonal", "octagonal", "round"],
+                "label": "Pillar Style",
+                "description": "Style of pillars (when center_feature is 'pillars')"
+            },
+            "random_seed": {
+                "type": "int", "default": 0, "min": 0, "max": 999999, "label": "Random Seed",
+                "description": "Seed for deterministic generation (0 = random)"
+            },
+        }
+
+    def generate(self) -> List[Brush]:
+        """Generate hub room geometry.
+
+        Construction follows the Antechamber pattern (CLAUDE.md Section 8):
+        1. Floor slab with t-extension in all directions
+        2. Ceiling slab with t-extension in all directions
+        3. South wall (3-piece portal or solid)
+        4. North wall (3-piece portal or solid)
+        5. West wall (3-piece portal or solid)
+        6. East wall (3-piece portal or solid)
+        7. Optional center feature (pillars, platform, pit)
+        8. Portal tag registration
+        """
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+        t = self.WALL_THICKNESS
+        pw, ph = PORTAL_WIDTH, PORTAL_HEIGHT
+
+        hw = self.width
+        nl = self.length
+        nh = self.height
+
+        # === FLOOR ===
+        brushes.append(self._floor_box(
+            ox - hw - t, oy - t, oz - t,
+            ox + hw + t, oy + nl + t, oz
+        ))
+
+        # === CEILING ===
+        brushes.append(self._ceiling_box(
+            ox - hw - t, oy - t, oz + nh,
+            ox + hw + t, oy + nl + t, oz + nh + t
+        ))
+
+        # === WALLS WITH PORTAL OPENINGS ===
+
+        # Front (South) wall — outer face at oy - t, inner face at oy
+        if self.has_entrance:
+            entrance_x = ox + self._entrance_x_offset
+            # Left piece
+            brushes.append(self._wall_box(
+                ox - hw - t, oy - t, oz,
+                entrance_x - pw / 2, oy, oz + nh
+            ))
+            # Right piece
+            brushes.append(self._wall_box(
+                entrance_x + pw / 2, oy - t, oz,
+                ox + hw + t, oy, oz + nh
+            ))
+            # Lintel
+            brushes.append(self._wall_box(
+                entrance_x - pw / 2, oy - t, oz + ph,
+                entrance_x + pw / 2, oy, oz + nh
+            ))
+        else:
+            brushes.append(self._wall_box(
+                ox - hw - t, oy - t, oz,
+                ox + hw + t, oy, oz + nh
+            ))
+
+        # Back (North) wall — outer face at oy + nl + t, inner face at oy + nl
+        if self.has_exit:
+            exit_x = ox + self._exit_x_offset
+            # Left piece
+            brushes.append(self._wall_box(
+                ox - hw - t, oy + nl, oz,
+                exit_x - pw / 2, oy + nl + t, oz + nh
+            ))
+            # Right piece
+            brushes.append(self._wall_box(
+                exit_x + pw / 2, oy + nl, oz,
+                ox + hw + t, oy + nl + t, oz + nh
+            ))
+            # Lintel
+            brushes.append(self._wall_box(
+                exit_x - pw / 2, oy + nl, oz + ph,
+                exit_x + pw / 2, oy + nl + t, oz + nh
+            ))
+        else:
+            brushes.append(self._wall_box(
+                ox - hw - t, oy + nl, oz,
+                ox + hw + t, oy + nl + t, oz + nh
+            ))
+
+        # Left (West) wall — outer face at ox - hw - t, inner face at ox - hw
+        if self.has_side_west:
+            side_y = oy + nl / 2 + self._side_y_offset
+            # Bottom piece (south of portal)
+            brushes.append(self._wall_box(
+                ox - hw - t, oy - t, oz,
+                ox - hw, side_y - pw / 2, oz + nh
+            ))
+            # Top piece (north of portal)
+            brushes.append(self._wall_box(
+                ox - hw - t, side_y + pw / 2, oz,
+                ox - hw, oy + nl + t, oz + nh
+            ))
+            # Lintel
+            brushes.append(self._wall_box(
+                ox - hw - t, side_y - pw / 2, oz + ph,
+                ox - hw, side_y + pw / 2, oz + nh
+            ))
+        else:
+            brushes.append(self._wall_box(
+                ox - hw - t, oy - t, oz,
+                ox - hw, oy + nl + t, oz + nh
+            ))
+
+        # Right (East) wall — outer face at ox + hw + t, inner face at ox + hw
+        if self.has_side_east:
+            side_y = oy + nl / 2 + self._side_y_offset
+            # Bottom piece (south of portal)
+            brushes.append(self._wall_box(
+                ox + hw, oy - t, oz,
+                ox + hw + t, side_y - pw / 2, oz + nh
+            ))
+            # Top piece (north of portal)
+            brushes.append(self._wall_box(
+                ox + hw, side_y + pw / 2, oz,
+                ox + hw + t, oy + nl + t, oz + nh
+            ))
+            # Lintel
+            brushes.append(self._wall_box(
+                ox + hw, side_y - pw / 2, oz + ph,
+                ox + hw + t, side_y + pw / 2, oz + nh
+            ))
+        else:
+            brushes.append(self._wall_box(
+                ox + hw, oy - t, oz,
+                ox + hw + t, oy + nl + t, oz + nh
+            ))
+
+        # === OPTIONAL CENTER FEATURE ===
+        center_x = ox
+        center_y = oy + nl / 2
+
+        if self.center_feature == "pillars":
+            # 4 pillars in a square pattern around center
+            pillar_size = 24.0
+            pillar_offset = 64.0  # Distance from center to each pillar
+            for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                px = center_x + dx * pillar_offset
+                py = center_y + dy * pillar_offset
+                brushes.extend(self._generate_room_pillar(
+                    px, py, oz, oz + nh,
+                    pillar_size, self.pillar_style
+                ))
+
+        elif self.center_feature == "platform":
+            # Raised platform in the center
+            plat_hw = 48.0   # Half-width of platform
+            plat_h = 16.0    # Platform height
+            brushes.append(self._structural_box(
+                center_x - plat_hw, center_y - plat_hw, oz,
+                center_x + plat_hw, center_y + plat_hw, oz + plat_h
+            ))
+
+        elif self.center_feature == "pit":
+            # Sunken pit in the center (floor lowered)
+            pit_hw = 48.0    # Half-width of pit
+            pit_depth = 32.0  # How far below floor
+            # Pit floor
+            brushes.append(self._floor_box(
+                center_x - pit_hw, center_y - pit_hw, oz - pit_depth - t,
+                center_x + pit_hw, center_y + pit_hw, oz - pit_depth
+            ))
+            # Pit walls (4 sides)
+            # South pit wall
+            brushes.append(self._structural_box(
+                center_x - pit_hw, center_y - pit_hw - t, oz - pit_depth,
+                center_x + pit_hw, center_y - pit_hw, oz
+            ))
+            # North pit wall
+            brushes.append(self._structural_box(
+                center_x - pit_hw, center_y + pit_hw, oz - pit_depth,
+                center_x + pit_hw, center_y + pit_hw + t, oz
+            ))
+            # West pit wall
+            brushes.append(self._structural_box(
+                center_x - pit_hw - t, center_y - pit_hw - t, oz - pit_depth,
+                center_x - pit_hw, center_y + pit_hw + t, oz
+            ))
+            # East pit wall
+            brushes.append(self._structural_box(
+                center_x + pit_hw, center_y - pit_hw - t, oz - pit_depth,
+                center_x + pit_hw + t, center_y + pit_hw + t, oz
+            ))
+
+        # === REGISTER PORTAL TAGS ===
+        if self.has_entrance:
+            entrance_x = ox + self._entrance_x_offset
+            self._register_portal_tag(
+                portal_id="entrance",
+                center_x=entrance_x,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.has_exit:
+            self._register_portal_tag(
+                portal_id="exit",
+                center_x=ox + self._exit_x_offset,
+                center_y=oy + nl,
+                center_z=oz,
+                direction=PortalDirection.NORTH,
+            )
+        if self.has_side_east:
+            self._register_portal_tag(
+                portal_id="side_east",
+                center_x=ox + hw,
+                center_y=oy + nl / 2 + self._side_y_offset,
+                center_z=oz,
+                direction=PortalDirection.EAST,
+            )
+        if self.has_side_west:
+            self._register_portal_tag(
+                portal_id="side_west",
+                center_x=ox - hw,
+                center_y=oy + nl / 2 + self._side_y_offset,
+                center_z=oz,
+                direction=PortalDirection.WEST,
+            )
+
+        return brushes
+
+
+class ThroneRoom(GeometricPrimitive):
+    """Throne room with raised dais at the back.
+
+    A single-portal destination room featuring a raised platform (dais)
+    at the back third of the room, creating vertical drama and a
+    focal point. The 16-unit step up creates a boss arena feel.
+
+    Footprint: 3x3 cells (384x384 units)
+    Portal: entrance SOUTH at cell (1,0)
+    Interior: front 2/3 at floor level, back 1/3 raised by dais_height
+    """
+
+    width: float = 176.0          # Half-width
+    length: float = 352.0         # Full Y length
+    height: float = 128.0         # Ceiling height
+    dais_height: float = 16.0     # Height of raised platform
+    pillar_style: str = "square"  # Pillars flanking the step
+    pillar_capital: bool = False
+    has_pillars: bool = True      # Flanking pillars at step
+    has_entrance: bool = True
+    random_seed: int = 0
+
+    WALL_THICKNESS: float = 16.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Throne Room"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Rooms"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        schema = {
+            "width": {
+                "type": "float", "default": 176.0, "min": 64, "max": 384,
+                "label": "Half-Width",
+                "description": "Half-width of the room (total width = 2x this value)"
+            },
+            "length": {
+                "type": "float", "default": 352.0, "min": 128, "max": 768,
+                "label": "Length",
+                "description": "Front-to-back depth of the room"
+            },
+            "height": {
+                "type": "float", "default": 128.0, "min": 64, "max": 256,
+                "label": "Height",
+                "description": "Interior ceiling height"
+            },
+            "dais_height": {
+                "type": "float", "default": 16.0, "min": 8, "max": 24,
+                "label": "Dais Height",
+                "description": "Height of the raised platform at the back of the room"
+            },
+            "pillar_style": {
+                "type": "choice", "default": "square",
+                "choices": ["square", "hexagonal", "octagonal", "round"],
+                "label": "Pillar Style",
+                "description": "Shape of the pillars flanking the dais step"
+            },
+            "pillar_capital": {
+                "type": "bool", "default": False,
+                "label": "Pillar Capitals",
+                "description": "Add decorative capitals to pillars"
+            },
+            "has_pillars": {
+                "type": "bool", "default": True,
+                "label": "Flanking Pillars",
+                "description": "Add pillars flanking the dais step"
+            },
+            "has_entrance": {
+                "type": "bool", "default": True,
+                "label": "Enable Entrance Portal",
+                "description": "Enable the entrance portal opening"
+            },
+            "random_seed": {
+                "type": "int", "default": 0, "min": 0, "max": 999999,
+                "label": "Random Seed (0=random)",
+                "description": "Seed for reproducible variation (0 = random each time)"
+            },
+        }
+        return schema
+
+    def generate(self) -> List[Brush]:
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+        t = self.WALL_THICKNESS
+
+        hw = self.width
+        nl = self.length
+        nh = self.height
+        dh = self.dais_height
+
+        # Dais starts at 2/3 of room length (back third is raised)
+        dais_start = round(nl * 2.0 / 3.0 / 16) * 16  # Snap to 16-unit grid
+
+        # === FLOOR ===
+        # Main floor (front 2/3) — t-extension all 4 outer sides + overlap past step
+        brushes.append(self._floor_box(
+            ox - hw - t, oy - t, oz - t,
+            ox + hw + t, oy + dais_start + t, oz
+        ))
+
+        # Dais floor (back 1/3) — t-extension on 3 outer sides, meets step at south
+        brushes.append(self._floor_box(
+            ox - hw - t, oy + dais_start, oz + dh - t,
+            ox + hw + t, oy + nl + t, oz + dh
+        ))
+
+        # Step wall (vertical face between floor levels)
+        brushes.append(self._structural_box(
+            ox - hw - t, oy + dais_start, oz,
+            ox + hw + t, oy + dais_start + t, oz + dh
+        ))
+
+        # === CEILING ===
+        brushes.append(self._ceiling_box(
+            ox - hw - t, oy - t, oz + nh,
+            ox + hw + t, oy + nl + t, oz + nh + t
+        ))
+
+        # === SIDE WALLS (span full Y-extent, Rule 2) ===
+        # Left wall
+        brushes.append(self._wall_box(
+            ox - hw - t, oy - t, oz,
+            ox - hw, oy + nl + t, oz + nh
+        ))
+        # Right wall
+        brushes.append(self._wall_box(
+            ox + hw, oy - t, oz,
+            ox + hw + t, oy + nl + t, oz + nh
+        ))
+
+        # === SOUTH WALL (entrance) — outer face at footprint boundary (Rule 3 / §5.1) ===
+        entrance_portal = PortalSpec(enabled=self.has_entrance)
+        front_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy - t, z1=oz,
+            x2=ox + hw + t, y2=oy, z2=oz + nh,
+            portal_spec=entrance_portal,
+            portal_axis="x",
+            portal_center=ox,
+        )
+        brushes.extend(front_brushes)
+
+        # === NORTH WALL (back, solid) — outer face at footprint boundary ===
+        # Starts at dais floor level (dh) since dais floor covers below
+        brushes.append(self._wall_box(
+            ox - hw - t, oy + nl, oz + dh,
+            ox + hw + t, oy + nl + t, oz + nh
+        ))
+        # Fill under the back wall behind the dais (from oz to oz+dh is covered by dais floor t-extension)
+
+        # === OPTIONAL PILLARS FLANKING THE STEP ===
+        if self.has_pillars:
+            pillar_size = 24
+            pillar_inset = 40  # Distance from wall to pillar center
+            brushes.extend(self._generate_room_pillar(
+                ox - hw + pillar_inset, oy + dais_start + pillar_inset / 2, oz, oz + nh,
+                pillar_size, self.pillar_style, self.pillar_capital
+            ))
+            brushes.extend(self._generate_room_pillar(
+                ox + hw - pillar_inset, oy + dais_start + pillar_inset / 2, oz, oz + nh,
+                pillar_size, self.pillar_style, self.pillar_capital
+            ))
+
+        # === PORTAL TAG REGISTRATION ===
+        if self.has_entrance:
+            self._register_portal_tag(
+                portal_id="entrance",
+                center_x=ox,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+
+        return brushes
+
+
+class Vestibule(GeometricPrimitive):
+    """Small buffer room between corridors and large rooms.
+
+    A tiny through-passage that prevents rooms from opening directly
+    into each other, creating pacing contrast. Offset portals force
+    a slight jog through the room.
+
+    Footprint: 2x1 cells (256x128 units)
+    Portals: entrance SOUTH at cell (0,0), exit NORTH at cell (1,0)
+    """
+
+    width: float = 112.0          # Half-width
+    length: float = 96.0          # Full Y length
+    height: float = 128.0         # Ceiling height
+    has_entrance: bool = True
+    has_exit: bool = True
+    random_seed: int = 0
+
+    # Portal offsets — set by layout generator
+    _entrance_x_offset: float = 0.0
+    _exit_x_offset: float = 0.0
+
+    WALL_THICKNESS: float = 16.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Vestibule"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Rooms"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        schema = {
+            "width": {
+                "type": "float", "default": 112.0, "min": 48, "max": 256,
+                "label": "Half-Width",
+                "description": "Half-width of the room (total width = 2x this value)"
+            },
+            "length": {
+                "type": "float", "default": 96.0, "min": 64, "max": 256,
+                "label": "Length",
+                "description": "Front-to-back depth of the room"
+            },
+            "height": {
+                "type": "float", "default": 128.0, "min": 64, "max": 256,
+                "label": "Height",
+                "description": "Interior ceiling height"
+            },
+            "has_entrance": {
+                "type": "bool", "default": True,
+                "label": "Enable Entrance Portal",
+                "description": "Enable the entrance portal opening (SOUTH)"
+            },
+            "has_exit": {
+                "type": "bool", "default": True,
+                "label": "Enable Exit Portal",
+                "description": "Enable the exit portal opening (NORTH)"
+            },
+            "random_seed": {
+                "type": "int", "default": 0, "min": 0, "max": 999999,
+                "label": "Random Seed (0=random)",
+                "description": "Seed for reproducible variation (0 = random each time)"
+            },
+        }
+        return schema
+
+    def generate(self) -> List[Brush]:
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+        t = self.WALL_THICKNESS
+
+        hw = self.width
+        nl = self.length
+        nh = self.height
+
+        # === FLOOR (t-extension all 4 sides) ===
+        brushes.append(self._floor_box(
+            ox - hw - t, oy - t, oz - t,
+            ox + hw + t, oy + nl + t, oz
+        ))
+
+        # === CEILING (t-extension all 4 sides) ===
+        brushes.append(self._ceiling_box(
+            ox - hw - t, oy - t, oz + nh,
+            ox + hw + t, oy + nl + t, oz + nh + t
+        ))
+
+        # === SIDE WALLS (span full Y-extent, Rule 2) ===
+        brushes.append(self._wall_box(
+            ox - hw - t, oy - t, oz,
+            ox - hw, oy + nl + t, oz + nh
+        ))
+        brushes.append(self._wall_box(
+            ox + hw, oy - t, oz,
+            ox + hw + t, oy + nl + t, oz + nh
+        ))
+
+        # === SOUTH WALL (entrance) — outer face at footprint boundary ===
+        entrance_x = ox + self._entrance_x_offset
+        entrance_portal = PortalSpec(enabled=self.has_entrance)
+        front_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy - t, z1=oz,
+            x2=ox + hw + t, y2=oy, z2=oz + nh,
+            portal_spec=entrance_portal,
+            portal_axis="x",
+            portal_center=entrance_x,
+        )
+        brushes.extend(front_brushes)
+
+        # === NORTH WALL (exit) — outer face at footprint boundary ===
+        exit_x = ox + self._exit_x_offset
+        exit_portal = PortalSpec(enabled=self.has_exit)
+        back_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy + nl, z1=oz,
+            x2=ox + hw + t, y2=oy + nl + t, z2=oz + nh,
+            portal_spec=exit_portal,
+            portal_axis="x",
+            portal_center=exit_x,
+        )
+        brushes.extend(back_brushes)
+
+        # === PORTAL TAG REGISTRATION ===
+        if self.has_entrance:
+            self._register_portal_tag(
+                portal_id="entrance",
+                center_x=entrance_x,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.has_exit:
+            self._register_portal_tag(
+                portal_id="exit",
+                center_x=exit_x,
+                center_y=oy + nl,
+                center_z=oz,
+                direction=PortalDirection.NORTH,
+            )
+
+        return brushes
+
+
+class Processional(GeometricPrimitive):
+    """Long processional hall with colonnade pillars.
+
+    A through-passage room with two rows of pillars creating a
+    cathedral nave feel. Entrance and exit on opposite short walls.
+
+    Footprint: 2x4 cells (256x512 units)
+    Portals: entrance SOUTH at cell (0,0), exit NORTH at cell (1,3)
+    """
+
+    width: float = 112.0          # Half-width
+    length: float = 480.0         # Full Y length
+    height: float = 128.0         # Ceiling height
+    pillar_count: int = 3         # Number of pillar pairs
+    pillar_style: str = "square"
+    pillar_capital: bool = False
+    has_entrance: bool = True
+    has_exit: bool = True
+    random_seed: int = 0
+
+    # Portal offsets — set by layout generator
+    _entrance_x_offset: float = 0.0
+    _exit_x_offset: float = 0.0
+
+    WALL_THICKNESS: float = 16.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Processional"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Rooms"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        schema = {
+            "width": {
+                "type": "float", "default": 112.0, "min": 48, "max": 256,
+                "label": "Half-Width",
+                "description": "Half-width of the room (total width = 2x this value)"
+            },
+            "length": {
+                "type": "float", "default": 480.0, "min": 256, "max": 1024,
+                "label": "Length",
+                "description": "Front-to-back depth of the room"
+            },
+            "height": {
+                "type": "float", "default": 128.0, "min": 64, "max": 256,
+                "label": "Height",
+                "description": "Interior ceiling height"
+            },
+            "pillar_count": {
+                "type": "int", "default": 3, "min": 2, "max": 4,
+                "label": "Pillar Pairs",
+                "description": "Number of pillar pairs along the length"
+            },
+            "pillar_style": {
+                "type": "choice", "default": "square",
+                "choices": ["square", "hexagonal", "octagonal", "round"],
+                "label": "Pillar Style",
+                "description": "Shape of the colonnade pillars"
+            },
+            "pillar_capital": {
+                "type": "bool", "default": False,
+                "label": "Pillar Capitals",
+                "description": "Add decorative capitals to pillars"
+            },
+            "has_entrance": {
+                "type": "bool", "default": True,
+                "label": "Enable Entrance Portal",
+                "description": "Enable the entrance portal opening (SOUTH)"
+            },
+            "has_exit": {
+                "type": "bool", "default": True,
+                "label": "Enable Exit Portal",
+                "description": "Enable the exit portal opening (NORTH)"
+            },
+            "random_seed": {
+                "type": "int", "default": 0, "min": 0, "max": 999999,
+                "label": "Random Seed (0=random)",
+                "description": "Seed for reproducible variation (0 = random each time)"
+            },
+        }
+        return schema
+
+    def generate(self) -> List[Brush]:
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+        t = self.WALL_THICKNESS
+
+        hw = self.width
+        nl = self.length
+        nh = self.height
+
+        # === FLOOR (t-extension all 4 sides) ===
+        brushes.append(self._floor_box(
+            ox - hw - t, oy - t, oz - t,
+            ox + hw + t, oy + nl + t, oz
+        ))
+
+        # === CEILING (t-extension all 4 sides) ===
+        brushes.append(self._ceiling_box(
+            ox - hw - t, oy - t, oz + nh,
+            ox + hw + t, oy + nl + t, oz + nh + t
+        ))
+
+        # === SIDE WALLS (span full Y-extent, Rule 2) ===
+        brushes.append(self._wall_box(
+            ox - hw - t, oy - t, oz,
+            ox - hw, oy + nl + t, oz + nh
+        ))
+        brushes.append(self._wall_box(
+            ox + hw, oy - t, oz,
+            ox + hw + t, oy + nl + t, oz + nh
+        ))
+
+        # === SOUTH WALL (entrance) — outer face at footprint boundary ===
+        entrance_x = ox + self._entrance_x_offset
+        entrance_portal = PortalSpec(enabled=self.has_entrance)
+        front_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy - t, z1=oz,
+            x2=ox + hw + t, y2=oy, z2=oz + nh,
+            portal_spec=entrance_portal,
+            portal_axis="x",
+            portal_center=entrance_x,
+        )
+        brushes.extend(front_brushes)
+
+        # === NORTH WALL (exit) — outer face at footprint boundary ===
+        exit_x = ox + self._exit_x_offset
+        exit_portal = PortalSpec(enabled=self.has_exit)
+        back_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy + nl, z1=oz,
+            x2=ox + hw + t, y2=oy + nl + t, z2=oz + nh,
+            portal_spec=exit_portal,
+            portal_axis="x",
+            portal_center=exit_x,
+        )
+        brushes.extend(back_brushes)
+
+        # === COLONNADE PILLARS ===
+        pillar_size = 24
+        pillar_inset = 32  # Distance from wall to pillar center
+        # Evenly space pillars along the length
+        for i in range(self.pillar_count):
+            # Position pillars evenly between entrance and exit
+            pillar_y = oy + nl * (i + 1) / (self.pillar_count + 1)
+            # Left row
+            brushes.extend(self._generate_room_pillar(
+                ox - hw + pillar_inset, pillar_y, oz, oz + nh,
+                pillar_size, self.pillar_style, self.pillar_capital
+            ))
+            # Right row
+            brushes.extend(self._generate_room_pillar(
+                ox + hw - pillar_inset, pillar_y, oz, oz + nh,
+                pillar_size, self.pillar_style, self.pillar_capital
+            ))
+
+        # === PORTAL TAG REGISTRATION ===
+        if self.has_entrance:
+            self._register_portal_tag(
+                portal_id="entrance",
+                center_x=entrance_x,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.has_exit:
+            self._register_portal_tag(
+                portal_id="exit",
+                center_x=exit_x,
+                center_y=oy + nl,
+                center_z=oz,
+                direction=PortalDirection.NORTH,
+            )
+
+        return brushes
+
+
+class DoglegRoom(GeometricPrimitive):
+    """L-shaped room that breaks line-of-sight.
+
+    A room with solid fill in the NW quadrant creating an L-shape.
+    Players enter from the south and must turn to find the east exit.
+    Creates ambush tension and tactical depth.
+
+    Footprint: 3x3 cells (384x384 units)
+    Portals: entrance SOUTH at cell (1,0), exit EAST at cell (2,2)
+
+    Layout (top-down):
+        +-----+-----+-----+
+        |FILL |     | exit|  Row 2 (Y=256-384): NW cell is SOLID FILL
+        +-----+-----+-----+
+        |     |     |     |  Row 1 (Y=128-256): all open
+        +-----+-----+-----+
+        |     | ent |     |  Row 0 (Y=0-128): entrance SOUTH
+        +-----+-----+-----+
+    """
+
+    width: float = 176.0          # Half-width of FULL 3x3 footprint
+    length: float = 352.0         # Full Y length
+    height: float = 128.0         # Ceiling height
+    has_entrance: bool = True
+    has_exit: bool = True
+    random_seed: int = 0
+
+    # Portal offsets — set by layout generator
+    _entrance_x_offset: float = 0.0
+    _exit_y_offset: float = 0.0
+
+    WALL_THICKNESS: float = 16.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Dogleg Room"
+
+    @classmethod
+    def get_category(cls) -> str:
+        return "Rooms"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        schema = {
+            "width": {
+                "type": "float", "default": 176.0, "min": 64, "max": 384,
+                "label": "Half-Width",
+                "description": "Half-width of the room (total width = 2x this value)"
+            },
+            "length": {
+                "type": "float", "default": 352.0, "min": 128, "max": 768,
+                "label": "Length",
+                "description": "Front-to-back depth of the room"
+            },
+            "height": {
+                "type": "float", "default": 128.0, "min": 64, "max": 256,
+                "label": "Height",
+                "description": "Interior ceiling height"
+            },
+            "has_entrance": {
+                "type": "bool", "default": True,
+                "label": "Enable Entrance Portal",
+                "description": "Enable the entrance portal opening (SOUTH)"
+            },
+            "has_exit": {
+                "type": "bool", "default": True,
+                "label": "Enable Exit Portal",
+                "description": "Enable the exit portal opening (EAST)"
+            },
+            "random_seed": {
+                "type": "int", "default": 0, "min": 0, "max": 999999,
+                "label": "Random Seed (0=random)",
+                "description": "Seed for reproducible variation (0 = random each time)"
+            },
+        }
+        return schema
+
+    def generate(self) -> List[Brush]:
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+        t = self.WALL_THICKNESS
+
+        hw = self.width       # Half-width of entire 3x3 room
+        nl = self.length      # Full length of entire 3x3 room
+        nh = self.height
+
+        # The L-shape: NW corner (cell 0, row 2) is solid fill
+        # In local coords: fill occupies X from -hw to -hw + fill_width, Y from arm_split to nl
+        # Fill width = 1 cell worth = 1/3 of total width (2*hw)
+        fill_width = round(2 * hw / 3.0 / 16) * 16  # ~1 cell width, snapped to grid
+        fill_x_max = ox - hw + fill_width  # Right edge of fill block
+        arm_split = round(nl * 2.0 / 3.0 / 16) * 16  # Y boundary where fill starts (2/3 up)
+
+        # === NW JUNCTION FILL (solid block, Rule 5) ===
+        # Full Z-extent: oz-t to oz+nh+t (floor through ceiling)
+        brushes.append(self._wall_box(
+            ox - hw - t, oy + arm_split, oz - t,
+            fill_x_max, oy + nl + t, oz + nh + t
+        ))
+
+        # === FLOOR ===
+        # South section floor (full width, rows 0-1 + overlap into row 2)
+        brushes.append(self._floor_box(
+            ox - hw - t, oy - t, oz - t,
+            ox + hw + t, oy + arm_split + t, oz
+        ))
+        # North-east section floor (from fill edge to east edge, row 2)
+        brushes.append(self._floor_box(
+            fill_x_max, oy + arm_split, oz - t,
+            ox + hw + t, oy + nl + t, oz
+        ))
+
+        # === CEILING (single slab over entire 3x3 footprint) ===
+        # The fill block already covers oz+nh in NW corner, so a full-span ceiling is fine
+        brushes.append(self._ceiling_box(
+            ox - hw - t, oy - t, oz + nh,
+            ox + hw + t, oy + nl + t, oz + nh + t
+        ))
+
+        # === WEST WALL ===
+        # South portion (rows 0-1, from oy-t to arm_split)
+        brushes.append(self._wall_box(
+            ox - hw - t, oy - t, oz,
+            ox - hw, oy + arm_split + t, oz + nh
+        ))
+        # North portion covered by junction fill block
+
+        # === EAST WALL (full length, Rule 2) ===
+        # South section spans oy-t to arm_split+t (must cover floor slab t-extension)
+        brushes.append(self._wall_box(
+            ox + hw, oy - t, oz,
+            ox + hw + t, oy + arm_split + t, oz + nh
+        ))
+        # East wall north section (row 2, from arm_split to nl+t)
+        # This section has the exit portal
+        exit_y = oy + arm_split + (nl - arm_split) / 2 + self._exit_y_offset
+        exit_portal = PortalSpec(enabled=self.has_exit)
+        east_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox + hw, y1=oy + arm_split, z1=oz,
+            x2=ox + hw + t, y2=oy + nl + t, z2=oz + nh,
+            portal_spec=exit_portal,
+            portal_axis="y",
+            portal_center=exit_y,
+        )
+        brushes.extend(east_brushes)
+
+        # === SOUTH WALL (entrance) — outer face at footprint boundary ===
+        entrance_x = ox + self._entrance_x_offset
+        entrance_portal = PortalSpec(enabled=self.has_entrance)
+        front_brushes, _ = generate_portal_wall(
+            box_func=self._wall_box,
+            x1=ox - hw - t, y1=oy - t, z1=oz,
+            x2=ox + hw + t, y2=oy, z2=oz + nh,
+            portal_spec=entrance_portal,
+            portal_axis="x",
+            portal_center=entrance_x,
+        )
+        brushes.extend(front_brushes)
+
+        # === NORTH WALL (east arm only — from fill_x_max to east edge) ===
+        brushes.append(self._wall_box(
+            fill_x_max, oy + nl, oz,
+            ox + hw + t, oy + nl + t, oz + nh
+        ))
+
+        # === INNER WALL (south face of fill block — from fill_x_max west to fill left) ===
+        # This is already sealed by the junction fill block extending down to oz-t
+
+        # === PORTAL TAG REGISTRATION ===
+        if self.has_entrance:
+            self._register_portal_tag(
+                portal_id="entrance",
+                center_x=entrance_x,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.has_exit:
+            self._register_portal_tag(
+                portal_id="exit",
+                center_x=ox + hw,
+                center_y=exit_y,
+                center_z=oz,
+                direction=PortalDirection.EAST,
+            )
+
+        return brushes

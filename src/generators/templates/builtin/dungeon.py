@@ -15,12 +15,13 @@ DUNGEON_TEMPLATE = GenerationTemplate(
     map_height=35,
     room_count=10,
     complexity=4,
-    corridor_width=96,
+    corridor_width=64,
 
     # Generation hints
-    preferred_room_types=['Chamber', 'Prison', 'Sewer', 'Armory', 'Storage', 'Tomb', 'Laboratory'],
-    preferred_hall_types=['StraightHall', 'SquareCorner', 'TJunction'],
+    preferred_room_types=['Chamber', 'Prison', 'Sewer', 'Armory', 'Storage', 'Tomb', 'Laboratory', 'Vestibule', 'DoglegRoom', 'ThroneRoom'],
+    preferred_hall_types=['StraightHall', 'SquareCorner', 'TJunction', 'NarrowPassage'],
     room_probability=0.4,
     min_hall_between_rooms=1,
     allow_dead_ends=True,
+    max_shortcuts=1,
 )

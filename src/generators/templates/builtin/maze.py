@@ -18,8 +18,8 @@ MAZE_TEMPLATE = GenerationTemplate(
     corridor_width=64,
 
     # Generation hints
-    preferred_room_types=['Storage', 'Ossuary', 'Tower', 'Shrine', 'Sewer', 'Pit'],
-    preferred_hall_types=['SquareCorner', 'SquareCorner', 'StraightHall', 'StraightHall'],
+    preferred_room_types=['Storage', 'Ossuary', 'Tower', 'Shrine', 'Sewer', 'Pit', 'Vestibule'],
+    preferred_hall_types=['SquareCorner', 'SquareCorner', 'StraightHall', 'NarrowPassage'],
     room_probability=0.25,
     min_hall_between_rooms=3,
     allow_dead_ends=True,

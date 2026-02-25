@@ -1502,6 +1502,8 @@ class MainWindow(QMainWindow):
                     room_probability=hints.get('room_probability', 0.4),
                     min_hall_between_rooms=hints.get('min_hall_between_rooms', 1),
                     allow_dead_ends=hints.get('allow_dead_ends', True),
+                    corridor_width=hints.get('corridor_width'),
+                    max_shortcuts=hints.get('max_shortcuts', 0),
                 )
             else:
                 # Single floor generation (original behavior)
@@ -1516,6 +1518,8 @@ class MainWindow(QMainWindow):
                     room_probability=hints.get('room_probability', 0.4),
                     min_hall_between_rooms=hints.get('min_hall_between_rooms', 1),
                     allow_dead_ends=hints.get('allow_dead_ends', True),
+                    corridor_width=hints.get('corridor_width'),
+                    max_shortcuts=hints.get('max_shortcuts', 0),
                 )
 
             # Load the layout into the editor

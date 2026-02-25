@@ -535,6 +535,8 @@ class LayoutPanel(QWidget):
             "room_probability": 0.4,
             "min_hall_between_rooms": 1,
             "allow_dead_ends": True,
+            "corridor_width": None,
+            "max_shortcuts": 0,
         }
 
     def _apply_preset(self, preset_name: str):

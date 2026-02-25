@@ -34,6 +34,7 @@ class GenerationTemplate:
     room_probability: float = 0.4
     min_hall_between_rooms: int = 1
     allow_dead_ends: bool = True
+    max_shortcuts: int = 0
 
     def to_layout_params(self) -> Dict[str, Any]:
         """
@@ -57,10 +58,20 @@ class GenerationTemplate:
         Returns:
             Dictionary of hints for generate_random_layout()
         """
+        # Convert numeric corridor_width to bias string for hall selection
+        if self.corridor_width <= 64:
+            width_bias = 'narrow'
+        elif self.corridor_width >= 128:
+            width_bias = 'wide'
+        else:
+            width_bias = None
+
         return {
             "preferred_room_types": self.preferred_room_types.copy() if self.preferred_room_types else None,
             "preferred_hall_types": self.preferred_hall_types.copy() if self.preferred_hall_types else None,
             "room_probability": self.room_probability,
             "min_hall_between_rooms": self.min_hall_between_rooms,
             "allow_dead_ends": self.allow_dead_ends,
+            "corridor_width": width_bias,
+            "max_shortcuts": self.max_shortcuts,
         }

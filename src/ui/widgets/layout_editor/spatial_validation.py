@@ -36,7 +36,10 @@ PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
     'TJunction': (128.0, 'hall_height', 16.0),
     'Crossroads': (128.0, 'hall_height', 16.0),
     'SquareCorner': (128.0, 'hall_height', 16.0),
+    'WideCorner': (128.0, 'hall_height', 16.0),
     'VerticalStairHall': (160.0, None, 16.0),  # Connects adjacent floors (height_change=160)
+    'NarrowPassage': (128.0, 'hall_height', 16.0),
+    'WideCorridor': (128.0, 'hall_height', 16.0),
 
     # === ROOMS (23 total) ===
     # Most rooms use height=128 and t=16
@@ -63,6 +66,11 @@ PRIMITIVE_HEIGHTS: Dict[str, Tuple[float, Optional[str], float]] = {
     'Ossuary': (128.0, 'height', 16.0),
     'Cloister': (128.0, 'height', 16.0),
     'Colosseum': (128.0, 'height', 16.0),
+    'Hub': (128.0, 'height', 16.0),
+    'ThroneRoom': (128.0, 'height', 16.0),
+    'Vestibule': (128.0, 'height', 16.0),
+    'Processional': (128.0, 'height', 16.0),
+    'DoglegRoom': (128.0, 'height', 16.0),
 
     # === MULTI-LEVEL ROOMS (8 total) ===
     'Amphitheater': (192.0, 'height', 16.0),  # Tiered arena, taller for drama

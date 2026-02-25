@@ -6,7 +6,7 @@ A PyQt5 desktop application for generating brush geometry for idTech engines (Qu
 
 ## Features
 
-- **48 Geometric Modules** — Rooms, halls, multi-floor rooms, arches, staircases, pillars, and more
+- **56 Geometric Modules** — Rooms, halls, multi-floor rooms, arches, staircases, pillars, and more
 - **BSP-Based Dungeon Generation** — Random layouts with guaranteed connectivity
 - **Layout Editor** — 2D grid placement with drag-and-drop, portal auto-connect, and snap-to-portal
 - **Quad View** — 4-pane layout (Top/Front/Side/3D) with orthographic Z-height visualization
@@ -163,14 +163,14 @@ python3 main.py
 
 ## Module Library
 
-### Rooms (23)
-Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard, Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, Gatehouse, Sewer, Ossuary, Cloister, Colosseum
+### Rooms (28)
+Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard, Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber, Gatehouse, Sewer, Ossuary, Cloister, Colosseum, Hub, Vestibule, DoglegRoom, Processional, ThroneRoom
 
 ### Multi-Floor Rooms (8)
 Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge
 
-### Halls (5)
-StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall
+### Halls (8)
+StraightHall, TJunction, Crossroads, SquareCorner, VerticalStairHall, NarrowPassage, WideCorridor, WideCorner
 
 ### Structural (6)
 StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement

@@ -1986,3 +1986,725 @@ class VerticalStairHall(HallBase):
             )
 
         return result
+
+
+class NarrowPassage(HallBase):
+    """A narrow corridor segment — same footprint as StraightHall but with
+    interior step-walls narrowing the passage from 96 to 64 units.
+
+    Creates a claustrophobic squeeze effect for Crypt/Dungeon/Maze templates.
+    Portals remain standard 96-width for compatibility with other halls.
+
+    Floor plan:
+    +--[portal]--+
+    |  |      |  |
+    |  | PASS |  |  <- interior step-walls narrow the middle
+    |  |      |  |
+    +--[portal]--+
+
+    Footprint: 1x2 (same as StraightHall)
+    """
+
+    length: float = 256.0
+    portal_front: bool = True
+    portal_back: bool = True
+    height_delta_front: float = 0.0
+    height_delta_back: float = 0.0
+    step_height: float = 12.0
+    narrow_width: float = 64.0  # Interior width through the narrow section
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Narrow Passage"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        instance = cls()
+        schema = instance._get_base_schema()
+        schema.update(instance._get_stair_schema())
+        schema.update({
+            "length": {
+                "type": "float", "default": 256.0, "min": 64, "max": 1024, "label": "Length",
+                "description": "Total length of the corridor from front to back"
+            },
+            "portal_front": {
+                "type": "bool", "default": True, "label": "Front Portal",
+                "description": "Enable portal opening at the front (south) end"
+            },
+            "portal_back": {
+                "type": "bool", "default": True, "label": "Back Portal",
+                "description": "Enable portal opening at the back (north) end"
+            },
+            "height_delta_front": {
+                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "Front Height Delta",
+                "description": "Height change from center to front portal"
+            },
+            "height_delta_back": {
+                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "Back Height Delta",
+                "description": "Height change from center to back portal"
+            },
+            "narrow_width": {
+                "type": "float", "default": 64.0, "min": 32, "max": 96, "label": "Narrow Width",
+                "description": "Interior width through the narrow section (player is 32 units wide)"
+            },
+        })
+        return schema
+
+    def generate(self) -> List[Brush]:
+        """Generate narrow passage geometry.
+
+        Identical to StraightHall but with interior step-walls added on both sides
+        in the middle section to narrow the passage.
+        """
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+
+        hw = self.hall_width / 2
+        t = self.wall_thickness
+        h = self.hall_height
+        length = self.length
+
+        center_y = oy + length / 2
+        center_z = oz
+        front_z = oz + self.height_delta_front
+        back_z = oz + self.height_delta_back
+
+        min_z = min(center_z, front_z, back_z)
+        max_z = max(center_z, front_z, back_z)
+
+        # === CENTER FLOOR BOX ===
+        brushes.append(self._box(
+            ox - hw - t, center_y - hw - t, center_z - t,
+            ox + hw + t, center_y + hw + t, center_z
+        ))
+
+        # === FRONT ARM FLOOR ===
+        brushes.extend(self._generate_arm_floor(
+            arm_start=center_y - hw,
+            arm_end=oy - t,
+            perp_min=ox - hw - t,
+            perp_max=ox + hw + t,
+            z_start=center_z,
+            z_end=front_z,
+            axis="y",
+            step_height=self.step_height,
+            t=t
+        ))
+
+        # === BACK ARM FLOOR ===
+        brushes.extend(self._generate_arm_floor(
+            arm_start=center_y + hw,
+            arm_end=oy + length + t,
+            perp_min=ox - hw - t,
+            perp_max=ox + hw + t,
+            z_start=center_z,
+            z_end=back_z,
+            axis="y",
+            step_height=self.step_height,
+            t=t
+        ))
+
+        # === CEILING ===
+        ceiling_z = max_z + h
+        brushes.append(self._box(
+            ox - hw - t, oy - t, ceiling_z,
+            ox + hw + t, oy + length + t, ceiling_z + t
+        ))
+
+        # === SIDE WALLS ===
+        wall_bottom = min_z - t
+        brushes.append(self._box(
+            ox - hw - t, oy - t, wall_bottom,
+            ox - hw, oy + length + t, ceiling_z
+        ))
+        brushes.append(self._box(
+            ox + hw, oy - t, wall_bottom,
+            ox + hw + t, oy + length + t, ceiling_z
+        ))
+
+        # === END WALLS WITH PORTALS ===
+        brushes.extend(self._wall_with_portal(
+            ox - hw - t, oy - t, front_z,
+            ox + hw + t, oy, ceiling_z,
+            self.portal_front,
+            portal_axis="x"
+        ))
+        brushes.extend(self._wall_with_portal(
+            ox - hw - t, oy + length, back_z,
+            ox + hw + t, oy + length + t, ceiling_z,
+            self.portal_back,
+            portal_axis="x"
+        ))
+
+        # === INTERIOR STEP-WALLS (narrowing section) ===
+        # Narrow the corridor from hall_width to narrow_width in the middle section.
+        # Step-walls are interior decoration and don't affect sealing.
+        nhw = self.narrow_width / 2
+        if nhw < hw:
+            step_wall_t = hw - nhw
+            narrow_start = oy + length * 0.25
+            narrow_end = oy + length * 0.75
+
+            # Left interior step-wall
+            brushes.append(self._box(
+                ox - hw, narrow_start, oz,
+                ox - hw + step_wall_t, narrow_end, ceiling_z
+            ))
+            # Right interior step-wall
+            brushes.append(self._box(
+                ox + hw - step_wall_t, narrow_start, oz,
+                ox + hw, narrow_end, ceiling_z
+            ))
+
+        # === REGISTER PORTAL TAGS ===
+        if self.portal_front:
+            self._register_portal_tag(
+                portal_id="back",
+                center_x=ox,
+                center_y=oy,
+                center_z=front_z,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.portal_back:
+            self._register_portal_tag(
+                portal_id="front",
+                center_x=ox,
+                center_y=oy + length,
+                center_z=back_z,
+                direction=PortalDirection.NORTH,
+            )
+
+        return brushes
+
+    def validate(self) -> ValidationResult:
+        result = ValidationResult()
+        hw = self.hall_width / 2
+        front_arm = max(0.0, (self.length / 2) - hw)
+        back_arm = max(0.0, (self.length / 2) - hw)
+        if abs(self.height_delta_front) > 0.01:
+            self._check_arm_traversability("Front", front_arm, abs(self.height_delta_front), self.step_height, result)
+        if abs(self.height_delta_back) > 0.01:
+            self._check_arm_traversability("Back", back_arm, abs(self.height_delta_back), self.step_height, result)
+        return result
+
+
+class WideCorridor(HallBase):
+    """A wide processional corridor (3x2 footprint).
+
+    Player enters through standard 96-unit portal, space opens to a wide
+    interior, narrows back at exit. Junction fill brushes seal side columns.
+    Creates a grand hall feel for Arena/Cathedral/Fortress templates.
+
+    Floor plan:
+        +-----+-----+-----+
+        |SOLID|[N]  |SOLID|
+        | FILL|     | FILL|
+        +-----+     +-----+
+        |SOLID|     |SOLID|
+        | FILL|[S]  | FILL|
+        +-----+-----+-----+
+
+    Portals:
+    - south(1,0): SOUTH facing, centered on column 1
+    - north(1,1): NORTH facing, centered on column 1
+
+    Footprint: 3x2 cells
+    """
+
+    portal_south: bool = True
+    portal_north: bool = True
+    height_delta_south: float = 0.0
+    height_delta_north: float = 0.0
+    step_height: float = 12.0
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Wide Corridor"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        instance = cls()
+        schema = instance._get_base_schema()
+        schema.update(instance._get_stair_schema())
+        schema.update({
+            "portal_south": {
+                "type": "bool", "default": True, "label": "South Portal",
+                "description": "Enable portal at the south end"
+            },
+            "portal_north": {
+                "type": "bool", "default": True, "label": "North Portal",
+                "description": "Enable portal at the north end"
+            },
+            "height_delta_south": {
+                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "South Height Delta",
+                "description": "Height change from center to south portal"
+            },
+            "height_delta_north": {
+                "type": "float", "default": 0.0, "min": -256, "max": 256, "label": "North Height Delta",
+                "description": "Height change from center to north portal"
+            },
+        })
+        return schema
+
+    def generate(self) -> List[Brush]:
+        """Generate wide corridor geometry.
+
+        The corridor occupies the center column of a 3x2 footprint.
+        Side columns are sealed with junction fill brushes.
+        The center section opens wider for a grand processional feel.
+        """
+        self._reset_tags()
+        ox, oy, oz = self.params.origin
+        brushes: List[Brush] = []
+
+        hw = self.hall_width / 2
+        t = self.wall_thickness
+        h = self.hall_height
+        grid_size = 128.0
+
+        # Center of module
+        cx = ox + 1.5 * grid_size  # Center of column 1
+        cy = oy + 1.0 * grid_size  # Midpoint of 2-row depth
+
+        # Wide interior half-width: full 3-cell width minus outer walls
+        wide_hw = (3 * grid_size) / 2 - t  # = 176
+
+        # Z heights
+        south_z = oz + self.height_delta_south
+        north_z = oz + self.height_delta_north
+        center_z = oz
+
+        min_z = min(center_z, south_z, north_z)
+        max_z = max(center_z, south_z, north_z)
+        ceiling_z = max_z + h
+        wall_bottom = min_z - t
+
+        # Footprint boundaries
+        fp_x_min = ox
+        fp_x_max = ox + 3 * grid_size
+        fp_y_min = oy
+        fp_y_max = oy + 2 * grid_size
+
+        # === CENTER FLOOR BOX (wide section) ===
+        brushes.append(self._box(
+            cx - wide_hw - t, cy - hw - t, center_z - t,
+            cx + wide_hw + t, cy + hw + t, center_z
+        ))
+
+        # === SOUTH ARM FLOOR (standard width, center to south portal) ===
+        brushes.extend(self._generate_arm_floor(
+            arm_start=cy - hw,
+            arm_end=fp_y_min - t,
+            perp_min=cx - hw - t,
+            perp_max=cx + hw + t,
+            z_start=center_z,
+            z_end=south_z,
+            axis="y",
+            step_height=self.step_height,
+            t=t
+        ))
+
+        # === NORTH ARM FLOOR (standard width, center to north portal) ===
+        brushes.extend(self._generate_arm_floor(
+            arm_start=cy + hw,
+            arm_end=fp_y_max + t,
+            perp_min=cx - hw - t,
+            perp_max=cx + hw + t,
+            z_start=center_z,
+            z_end=north_z,
+            axis="y",
+            step_height=self.step_height,
+            t=t
+        ))
+
+        # === CEILING ===
+        # Wide section ceiling
+        brushes.append(self._box(
+            fp_x_min - t, cy - hw, ceiling_z,
+            fp_x_max + t, cy + hw, ceiling_z + t
+        ))
+        # South arm ceiling
+        brushes.append(self._box(
+            cx - hw - t, fp_y_min - t, ceiling_z,
+            cx + hw + t, cy - hw, ceiling_z + t
+        ))
+        # North arm ceiling
+        brushes.append(self._box(
+            cx - hw - t, cy + hw, ceiling_z,
+            cx + hw + t, fp_y_max + t, ceiling_z + t
+        ))
+
+        # === WIDE SECTION OUTER WALLS ===
+        brushes.append(self._box(
+            fp_x_min - t, cy - hw, wall_bottom,
+            fp_x_min, cy + hw, ceiling_z
+        ))
+        brushes.append(self._box(
+            fp_x_max, cy - hw, wall_bottom,
+            fp_x_max + t, cy + hw, ceiling_z
+        ))
+
+        # === NARROW ARM WALLS ===
+        # South arm side walls
+        brushes.append(self._box(
+            cx - hw - t, fp_y_min - t, wall_bottom,
+            cx - hw, cy - hw, ceiling_z
+        ))
+        brushes.append(self._box(
+            cx + hw, fp_y_min - t, wall_bottom,
+            cx + hw + t, cy - hw, ceiling_z
+        ))
+        # North arm side walls
+        brushes.append(self._box(
+            cx - hw - t, cy + hw, wall_bottom,
+            cx - hw, fp_y_max + t, ceiling_z
+        ))
+        brushes.append(self._box(
+            cx + hw, cy + hw, wall_bottom,
+            cx + hw + t, fp_y_max + t, ceiling_z
+        ))
+
+        # === CORNER FILLS (seal side columns) ===
+        # SW corner
+        brushes.append(self._box(
+            fp_x_min - t, fp_y_min - t, wall_bottom,
+            cx - hw, cy - hw, ceiling_z + t
+        ))
+        # SE corner
+        brushes.append(self._box(
+            cx + hw, fp_y_min - t, wall_bottom,
+            fp_x_max + t, cy - hw, ceiling_z + t
+        ))
+        # NW corner
+        brushes.append(self._box(
+            fp_x_min - t, cy + hw, wall_bottom,
+            cx - hw, fp_y_max + t, ceiling_z + t
+        ))
+        # NE corner
+        brushes.append(self._box(
+            cx + hw, cy + hw, wall_bottom,
+            fp_x_max + t, fp_y_max + t, ceiling_z + t
+        ))
+
+        # === END WALLS WITH PORTALS ===
+        brushes.extend(self._wall_with_portal(
+            cx - hw - t, fp_y_min - t, south_z,
+            cx + hw + t, fp_y_min, ceiling_z,
+            self.portal_south,
+            portal_axis="x"
+        ))
+        brushes.extend(self._wall_with_portal(
+            cx - hw - t, fp_y_max, north_z,
+            cx + hw + t, fp_y_max + t, ceiling_z,
+            self.portal_north,
+            portal_axis="x"
+        ))
+
+        # === REGISTER PORTAL TAGS ===
+        if self.portal_south:
+            self._register_portal_tag(
+                portal_id="south",
+                center_x=cx,
+                center_y=fp_y_min,
+                center_z=south_z,
+                direction=PortalDirection.SOUTH,
+            )
+        if self.portal_north:
+            self._register_portal_tag(
+                portal_id="north",
+                center_x=cx,
+                center_y=fp_y_max,
+                center_z=north_z,
+                direction=PortalDirection.NORTH,
+            )
+
+        return brushes
+
+    def validate(self) -> ValidationResult:
+        result = ValidationResult()
+        hw = self.hall_width / 2
+        arm_length = max(0.0, 64.0 - hw)
+        if abs(self.height_delta_south) > 0.01:
+            self._check_arm_traversability("South", arm_length, abs(self.height_delta_south), self.step_height, result)
+        if abs(self.height_delta_north) > 0.01:
+            self._check_arm_traversability("North", arm_length, abs(self.height_delta_north), self.step_height, result)
+        return result
+
+
+class WideCorner(HallBase):
+    """A sweeping 90-degree corner corridor (2x2 footprint).
+
+    Alternative to SquareCorner with a wider interior turn. The inner
+    corner uses stepped axis-aligned brushes to approximate a diagonal
+    chamfer, creating a more open feel.
+
+    Portal Layout (0° rotation):
+        Portal A: SOUTH (bottom of vertical arm)
+        Portal B: EAST (right end of horizontal arm)
+
+    Floor plan:
+        +-------+-------+
+        | SOLID | ARM B |
+        | (NW)  | →EAST |
+        +-------+--+----+
+        | ARM A |ST|      ST = stepped corner fill
+        | ↓SOUTH|EP|
+        +---+---+--+
+            Portal A
+
+    Attributes:
+        arm_length: Length of each arm (both arms same length)
+        portal_a: Enable portal A (south)
+        portal_b: Enable portal B (east)
+    """
+
+    arm_length: float = 128.0
+    portal_a: bool = True
+    portal_b: bool = True
+    # Layout generator sets these to align junction with footprint cell centers
+    _center_x_offset: float = 64.0
+    _center_y_offset: float = 192.0
+
+    def __init__(self):
+        super().__init__()
+        self._floor_texture: str = ""
+        self._wall_texture: str = ""
+        self._ceiling_texture: str = ""
+
+    @property
+    def floor_texture(self) -> str:
+        return self._floor_texture or self.params.texture
+
+    @property
+    def wall_texture(self) -> str:
+        return self._wall_texture or self.params.texture
+
+    @property
+    def ceiling_texture(self) -> str:
+        return self._ceiling_texture or self.params.texture
+
+    @classmethod
+    def get_display_name(cls) -> str:
+        return "Wide Corner"
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
+        instance = cls()
+        schema = instance._get_base_schema()
+        schema.update({
+            "arm_length": {
+                "type": "float", "default": 128.0, "min": 64, "max": 512,
+                "label": "Arm Length",
+                "description": "Length of each arm from the corner junction"
+            },
+            "portal_a": {
+                "type": "bool", "default": True, "label": "Portal A (Bottom)",
+                "description": "Enable portal at the south end of the vertical arm"
+            },
+            "portal_b": {
+                "type": "bool", "default": True, "label": "Portal B (Right)",
+                "description": "Enable portal at the east end of the horizontal arm"
+            },
+        })
+        return schema
+
+    def generate(self) -> List[Brush]:
+        """Generate wide corner geometry.
+
+        Same 2x2 footprint and portal positions as SquareCorner.
+        The inner corner (SE quadrant) uses stepped brushes instead
+        of a single solid fill, creating a wider turn radius.
+        """
+        self._reset_tags()
+        brushes: List[Brush] = []
+        t = self.wall_thickness
+        hw = self.hall_width / 2
+        h = self.hall_height
+        ox, oy, oz = self.params.origin
+
+        grid_size = 128.0
+
+        # Center junction point (same as SquareCorner)
+        cx = ox + self._center_x_offset
+        cy = oy + self._center_y_offset
+
+        arm_b_end_x = ox + 2 * grid_size
+
+        # ===== CENTER FLOOR BOX =====
+        brushes.append(self._box(
+            cx - hw - t, cy - hw - t, oz - t,
+            cx + hw + t, cy + hw + t, oz,
+            self.floor_texture
+        ))
+
+        # ===== CENTER CEILING BOX =====
+        brushes.append(self._box(
+            cx - hw - t, cy - hw - t, oz + h,
+            cx + hw + t, cy + hw + t, oz + h + t,
+            self.ceiling_texture
+        ))
+
+        # ===== ARM A (SOUTH - from center toward portal A) =====
+        arm_a_start_y = cy - hw
+        arm_a_end_y = oy
+
+        # Floor for arm A
+        brushes.append(self._box(
+            cx - hw - t, arm_a_end_y - t, oz - t,
+            cx + hw + t, arm_a_start_y, oz,
+            self.floor_texture
+        ))
+        # Ceiling for arm A
+        brushes.append(self._box(
+            cx - hw - t, arm_a_end_y - t, oz + h,
+            cx + hw + t, arm_a_start_y, oz + h + t,
+            self.ceiling_texture
+        ))
+
+        # West wall for arm A (extends to cy + hw to seal corner)
+        brushes.append(self._box(
+            cx - hw - t, arm_a_end_y - t, oz,
+            cx - hw, cy + hw, oz + h,
+            self.wall_texture
+        ))
+        # East wall for arm A
+        brushes.append(self._box(
+            cx + hw, arm_a_end_y - t, oz,
+            cx + hw + t, arm_a_start_y, oz + h,
+            self.wall_texture
+        ))
+
+        # ===== ARM B (EAST - from center toward portal B) =====
+        arm_b_start_x = cx + hw
+        arm_b_end_x_val = arm_b_end_x
+
+        # Floor for arm B
+        brushes.append(self._box(
+            arm_b_start_x, cy - hw - t, oz - t,
+            arm_b_end_x_val + t, cy + hw + t, oz,
+            self.floor_texture
+        ))
+        # Ceiling for arm B
+        brushes.append(self._box(
+            arm_b_start_x, cy - hw - t, oz + h,
+            arm_b_end_x_val + t, cy + hw + t, oz + h + t,
+            self.ceiling_texture
+        ))
+
+        # North wall for arm B
+        brushes.append(self._box(
+            arm_b_start_x, cy + hw, oz,
+            arm_b_end_x_val + t, cy + hw + t, oz + h,
+            self.wall_texture
+        ))
+        # South wall for arm B
+        brushes.append(self._box(
+            arm_b_start_x, cy - hw - t, oz,
+            arm_b_end_x_val + t, cy - hw, oz + h,
+            self.wall_texture
+        ))
+
+        # ===== NORTHWEST CORNER SEAL =====
+        # Same as SquareCorner — solid fill in NW quadrant
+        corner_fill_min_y = cy + hw
+        corner_fill_max_y = oy + 2 * grid_size
+        if corner_fill_max_y > corner_fill_min_y:
+            brushes.append(self._box(
+                cx - hw - t, corner_fill_min_y, oz - t,
+                cx + hw + t, corner_fill_max_y, oz + h + t,
+                self.wall_texture
+            ))
+
+        # ===== SOUTHEAST CORNER — STEPPED FILL =====
+        # Instead of SquareCorner's single solid block, use 2 stepped brushes
+        # to approximate a diagonal chamfer, creating a wider interior turn.
+        #
+        # The SE area spans from (cx+hw, oy) to (arm_b_end_x+t, cy-hw).
+        # We split it into 2 steps:
+        #   Step 1 (larger, at the corner): fills the inner portion
+        #   Step 2 (smaller, offset): fills the outer portion
+        se_x_min = cx + hw
+        se_x_max = arm_b_end_x_val + t
+        se_y_min = oy
+        se_y_max = cy - hw
+
+        se_width = se_x_max - se_x_min
+        se_depth = se_y_max - se_y_min
+
+        if se_width > 0 and se_depth > 0:
+            # Step boundary: split at roughly halfway, snapped to 16-unit grid
+            step_x = se_x_min + round(se_width / 2.0 / 16) * 16
+            step_y = se_y_min + round(se_depth / 2.0 / 16) * 16
+
+            # Clamp to ensure valid brushes (min 8 units per CLAUDE.md §6.1)
+            step_x = max(se_x_min + 16, min(step_x, se_x_max - 16))
+            step_y = max(se_y_min + 16, min(step_y, se_y_max - 16))
+
+            # Step 1: Inner corner block (closest to the bend)
+            brushes.append(self._box(
+                step_x, se_y_min, oz - t,
+                se_x_max, step_y, oz + h + t,
+                self.wall_texture
+            ))
+
+            # Step 2: Outer strip along the bottom
+            brushes.append(self._box(
+                se_x_min, se_y_min, oz - t,
+                se_x_max, se_y_min + t, oz + h + t,
+                self.wall_texture
+            ))
+
+            # Step 3: Outer strip along the right
+            brushes.append(self._box(
+                se_x_max - t, se_y_min + t, oz - t,
+                se_x_max, step_y, oz + h + t,
+                self.wall_texture
+            ))
+
+        # ===== PORTAL WALLS =====
+        # Portal A (SOUTH)
+        brushes.extend(self._wall_with_portal(
+            cx - hw - t, oy, oz,
+            cx + hw + t, oy + t, oz + h,
+            self.portal_a,
+            portal_axis="x"
+        ))
+
+        # Portal B (EAST)
+        brushes.extend(self._wall_with_portal(
+            arm_b_end_x_val, cy - hw - t, oz,
+            arm_b_end_x_val + t, cy + hw + t, oz + h,
+            self.portal_b,
+            portal_axis="y"
+        ))
+
+        # === REGISTER PORTAL TAGS ===
+        if self.portal_a:
+            self._register_portal_tag(
+                portal_id="a",
+                center_x=cx,
+                center_y=oy,
+                center_z=oz,
+                direction=PortalDirection.SOUTH,
+            )
+
+        if self.portal_b:
+            self._register_portal_tag(
+                portal_id="b",
+                center_x=arm_b_end_x_val,
+                center_y=cy,
+                center_z=oz,
+                direction=PortalDirection.EAST,
+            )
+
+        return brushes
+
+    def validate(self) -> ValidationResult:
+        """Validate WideCorner configuration."""
+        result = ValidationResult()
+        if self.hall_width < 64:
+            result.add_warning("width", "Hall width below minimum", self.hall_width, 64, "error")
+        if self.arm_length < 64:
+            result.add_warning("arm_length", "Arm length below minimum", self.arm_length, 64, "error")
+        return result

@@ -152,6 +152,15 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
         # shell_sides: disabled in random layout (polygonal portal issues)
     },
 
+    'Hub': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'center_feature': {'type': 'choice', 'choices': ['none', 'pillars', 'platform', 'pit']},
+        'pillar_style': {
+            'type': 'choice',
+            'choices': ['square', 'hexagonal', 'octagonal', 'round']
+        },
+    },
+
     # ==========================================================================
     # TEMPLATE-SPECIFIC ROOMS
     # ==========================================================================
@@ -225,6 +234,38 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 
     # ==========================================================================
+    # NEW ARCHETYPE ROOMS
+    # ==========================================================================
+    'ThroneRoom': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'dais_height': {'type': 'float', 'min': 8, 'max': 24},
+        'pillar_style': {
+            'type': 'choice',
+            'choices': ['square', 'hexagonal', 'octagonal', 'round']
+        },
+        'pillar_capital': {'type': 'bool'},
+        'has_pillars': {'type': 'bool'},
+    },
+
+    'Vestibule': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'Processional': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+        'pillar_count': {'type': 'int', 'min': 2, 'max': 4},
+        'pillar_style': {
+            'type': 'choice',
+            'choices': ['square', 'hexagonal', 'octagonal', 'round']
+        },
+        'pillar_capital': {'type': 'bool'},
+    },
+
+    'DoglegRoom': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    # ==========================================================================
     # HALLS - Minimal randomization (portal alignment critical)
     # Only random_seed is safe for halls
     # ==========================================================================
@@ -244,7 +285,19 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
     },
 
+    'WideCorner': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
     'VerticalStairHall': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'NarrowPassage': {
+        'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
+    },
+
+    'WideCorridor': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
     },
 }

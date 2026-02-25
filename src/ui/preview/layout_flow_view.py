@@ -77,7 +77,8 @@ def _get_color(primitive_type: str) -> QColor:
 _MODULE_DEFAULT_HEIGHTS = {
     # Halls — all 128
     'StraightHall': 128, 'TJunction': 128, 'Crossroads': 128,
-    'SquareCorner': 128, 'VerticalStairHall': 128,
+    'SquareCorner': 128, 'WideCorner': 128, 'VerticalStairHall': 128,
+    'NarrowPassage': 128, 'WideCorridor': 128,
     # Standard rooms
     'Sanctuary': 192, 'Tomb': 96, 'Tower': 384, 'Chamber': 128,
     'Storage': 112, 'GreatHall': 192, 'Prison': 96, 'Armory': 128,
@@ -86,7 +87,9 @@ _MODULE_DEFAULT_HEIGHTS = {
     'Pit': 96, 'Antechamber': 112,
     # Template-specific rooms
     'Gatehouse': 128, 'Sewer': 128, 'Ossuary': 128,
-    'Cloister': 128, 'Colosseum': 128,
+    'Cloister': 128, 'Colosseum': 128, 'Hub': 128,
+    # New archetype rooms
+    'ThroneRoom': 128, 'Vestibule': 128, 'Processional': 128, 'DoglegRoom': 128,
     # Multi-floor rooms
     'Amphitheater': 192, 'CatwalkChamber': 160, 'BalconyRoom': 160,
     'SunkenChamber': 128, 'LibraryArchive': 320, 'Grotto': 160,
@@ -110,7 +113,8 @@ _DEFAULT_MODULE_HEIGHT = 128
 
 _HALL_TYPES = frozenset((
     'StraightHall', 'TJunction', 'Crossroads',
-    'SquareCorner', 'VerticalStairHall',
+    'SquareCorner', 'WideCorner', 'VerticalStairHall',
+    'NarrowPassage', 'WideCorridor',
 ))
 
 

@@ -148,13 +148,15 @@ ROOM_PRIMITIVES_WITH_ENTRANCE = {
     'Sanctuary', 'Tomb', 'Chamber', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit',
     'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
+    'ThroneRoom',
 }
 
 # Multi-portal rooms that handle alignment via offset parameters instead of systemic correction.
 # These rooms have portals on different walls, so a single whole-room shift can't align all portals.
 # Includes multi-floor rooms which have entrance (SOUTH) + upper (NORTH) portals.
 MULTI_PORTAL_ROOMS = {
-    'GreatHall', 'Antechamber',
+    'GreatHall', 'Antechamber', 'Hub',
+    'Vestibule', 'Processional', 'DoglegRoom',
     'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
     'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
 }
@@ -172,7 +174,9 @@ ROOM_PRIMITIVES: Set[str] = {
     'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
     'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
     'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
+    'Hub',
     'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
+    'ThroneRoom', 'Vestibule', 'Processional', 'DoglegRoom',
     # Multi-Floor Rooms (rooms with internal upper portals and stairs)
     'Amphitheater', 'CatwalkChamber', 'BalconyRoom', 'SunkenChamber',
     'LibraryArchive', 'Grotto', 'RadialShrine', 'Forge',
@@ -908,6 +912,19 @@ class LayoutGenerator:
             set_if_not_user('hall_width', grid_size - 2*t)  # 96 for 128 grid, fits in 1 cell
             set_if_not_user('length', fp_depth * grid_size - 2*t)
 
+        elif ptype == 'NarrowPassage':
+            # NarrowPassage: same geometry as StraightHall (1x2 footprint)
+            t = params.get('wall_thickness', 16)
+            set_if_not_user('hall_width', grid_size - 2*t)
+            set_if_not_user('length', fp_depth * grid_size - 2*t)
+
+        elif ptype == 'WideCorridor':
+            # WideCorridor: 3x2 footprint, wider corridor centered on middle column
+            t = params.get('wall_thickness', 16)
+            set_if_not_user('hall_width', grid_size - 2*t)
+            params['_center_x_offset'] = 1.5 * grid_size  # Internal, always computed
+            params['_center_y_offset'] = 1.0 * grid_size  # Internal, always computed
+
         elif ptype == 'TJunction':
             # TRUE T-Junction: crossbar WEST-EAST (row 0), stem NORTH (row 1)
             # Footprint 3x2:
@@ -958,6 +975,21 @@ class LayoutGenerator:
             params['_center_y_offset'] = 1.5 * grid_size  # 192 - center of row 1
 
             # Arm lengths based on junction position to footprint edges
+            arm_len = min(fp_width, fp_depth) * grid_size - hw - 2*t
+            set_if_not_user('arm_length', arm_len)
+
+        elif ptype == 'WideCorner':
+            # WideCorner: sweeping 90-degree corner (2x2 footprint)
+            # Same portal positions as SquareCorner, wider interior turn
+            t = params.get('wall_thickness', 16)
+            hall_width = grid_size - 2*t
+            set_if_not_user('hall_width', hall_width)
+            hw = hall_width / 2
+
+            # Junction center at cell (0,1) = local position (0.5*grid, 1.5*grid)
+            params['_center_x_offset'] = 0.5 * grid_size
+            params['_center_y_offset'] = 1.5 * grid_size
+
             arm_len = min(fp_width, fp_depth) * grid_size - hw - 2*t
             set_if_not_user('arm_length', arm_len)
 
@@ -1352,6 +1384,265 @@ class LayoutGenerator:
                     else:  # rotation == 270
                         params['_side_y_offset'] = target_x - (nl / 2 + t)
 
+        elif ptype == 'Hub':
+            # Hub: central room with 4 portals (SOUTH, NORTH, EAST, WEST)
+            # Footprint: 3x3 cells = 384 x 384 units
+            # Room t=16: width = footprint/2 - t, length = footprint - 2*t
+            t = 16
+            hw = (fp_width * grid_size) / 2 - t
+            nl = fp_depth * grid_size - 2 * t
+            set_if_not_user('width', hw)
+            set_if_not_user('length', nl)
+            set_if_not_user('height', 128)
+
+            # MULTI-PORTAL ROOM: Hub has entrance (SOUTH), exit (NORTH),
+            # side_east (EAST), and side_west (WEST) portals.
+            # Compute offsets for each portal axis (same approach as Antechamber).
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            # ENTRANCE PORTAL: on SOUTH wall, varies along X
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            # EXIT PORTAL: on NORTH wall, varies along X (same axis as entrance)
+            exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
+            if exit_portal:
+                rotated_cell = exit_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = exit_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_exit_x_offset'] = target_y - norm_center_y
+
+            # SIDE PORTALS: on EAST/WEST walls, vary along Y
+            side_portal = next((p for p in footprint.portals if p.id == 'side_east'), None)
+            if side_portal:
+                rotated_cell = side_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = side_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_portal_y = nl / 2 + t
+                    offset = target_y - norm_portal_y
+                    params['_side_y_offset'] = offset
+                else:
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center = (fp_d * grid_size) / 2
+                    if prim.rotation == 90:
+                        params['_side_y_offset'] = norm_center - target_x - (nl / 2)
+                    else:  # rotation == 270
+                        params['_side_y_offset'] = target_x - (nl / 2 + t)
+
+        # === NEW ARCHETYPE ROOMS ===
+
+        elif ptype == 'ThroneRoom':
+            # ThroneRoom: 3x3 room with raised dais at back
+            # Single portal (entrance SOUTH) — uses systemic correction
+            set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
+            set_if_not_user('length', fp_depth * grid_size - 32)
+            set_if_not_user('height', 128)
+
+        elif ptype == 'Vestibule':
+            # Vestibule: 2x1 through-passage buffer room
+            # Multi-portal (entrance SOUTH + exit NORTH)
+            t = 16
+            hw = (fp_width * grid_size) / 2 - t
+            nl = fp_depth * grid_size - 2 * t
+            set_if_not_user('width', hw)
+            set_if_not_user('length', nl)
+            set_if_not_user('height', 128)
+
+            # MULTI-PORTAL ROOM: Vestibule has entrance (SOUTH) + exit (NORTH)
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            # ENTRANCE PORTAL: on SOUTH wall, varies along X
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            # EXIT PORTAL: on NORTH wall, varies along X
+            exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
+            if exit_portal:
+                rotated_cell = exit_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = exit_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_exit_x_offset'] = target_y - norm_center_y
+
+        elif ptype == 'Processional':
+            # Processional: 2x4 through-passage with colonnade
+            # Multi-portal (entrance SOUTH + exit NORTH) — same offset pattern as Vestibule
+            t = 16
+            hw = (fp_width * grid_size) / 2 - t
+            nl = fp_depth * grid_size - 2 * t
+            set_if_not_user('width', hw)
+            set_if_not_user('length', nl)
+            set_if_not_user('height', 128)
+
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
+            if exit_portal:
+                rotated_cell = exit_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = exit_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_exit_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_exit_x_offset'] = target_y - norm_center_y
+
+        elif ptype == 'DoglegRoom':
+            # DoglegRoom: 3x3 L-shaped room
+            # Multi-portal (entrance SOUTH + exit EAST)
+            t = 16
+            hw = (fp_width * grid_size) / 2 - t
+            nl = fp_depth * grid_size - 2 * t
+            set_if_not_user('width', hw)
+            set_if_not_user('length', nl)
+            set_if_not_user('height', 128)
+
+            fp_w, fp_d = footprint.rotated_size(prim.rotation)
+
+            # ENTRANCE PORTAL: on SOUTH wall, varies along X
+            entrance_portal = next((p for p in footprint.portals if p.id == 'entrance'), None)
+            if entrance_portal:
+                rotated_cell = entrance_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = entrance_portal.rotated_direction(prim.rotation)
+
+                if rotated_dir in (PortalDirection.SOUTH, PortalDirection.NORTH):
+                    target_x = (rotated_cell.x + 0.5) * grid_size
+                    norm_center_x = (fp_w * grid_size) / 2
+                    offset = target_x - norm_center_x
+                    if prim.rotation == 180:
+                        offset = -offset
+                    params['_entrance_x_offset'] = offset
+                else:
+                    target_y = (rotated_cell.y + 0.5) * grid_size
+                    norm_center_y = (fp_d * grid_size) / 2
+                    params['_entrance_x_offset'] = target_y - norm_center_y
+
+            # EXIT PORTAL: on EAST wall, varies along Y
+            exit_portal = next((p for p in footprint.portals if p.id == 'exit'), None)
+            if exit_portal:
+                rotated_cell = exit_portal.world_cell(
+                    CellCoord(0, 0), prim.rotation,
+                    footprint.width_cells, footprint.depth_cells
+                )
+                rotated_dir = exit_portal.rotated_direction(prim.rotation)
+
+                # DoglegRoom exit portal offset computation.
+                # The exit is on the EAST wall in local coords. _exit_y_offset shifts
+                # the portal along the wall's Y axis. After rotation + normalization,
+                # the local Y maps to a world coordinate through the rotation transform:
+                #   rot=0/90 (forward):  world_coord = local_Y + t
+                #   rot=180/270 (reverse): world_coord = (nl + 2*t) - local_Y
+                arm_split = round(nl * 2.0 / 3.0 / 16) * 16
+                base_portal_y = arm_split + (nl - arm_split) / 2  # default local Y
+
+                if rotated_dir in (PortalDirection.EAST, PortalDirection.WEST):
+                    target = (rotated_cell.y + 0.5) * grid_size
+                else:
+                    target = (rotated_cell.x + 0.5) * grid_size
+
+                if prim.rotation in (0, 90):
+                    # Forward: world = local_Y + t → local_Y = target - t
+                    params['_exit_y_offset'] = (target - t) - base_portal_y
+                else:
+                    # Reverse (180, 270): world = (nl + 2t) - local_Y → local_Y = (nl + 2t) - target
+                    params['_exit_y_offset'] = (nl + 2 * t) - target - base_portal_y
+
         # === MULTI-FLOOR ROOM PRIMITIVES ===
         # These rooms have internal upper portals and stairs for vertical gameplay
 
@@ -1600,7 +1891,10 @@ class LayoutGenerator:
                 'east': 'portal_east', 'west': 'portal_west'
             },
             'SquareCorner': {'a': 'portal_a', 'b': 'portal_b'},
+        'WideCorner': {'a': 'portal_a', 'b': 'portal_b'},
             'VerticalStairHall': {'bottom': 'portal_bottom', 'top': 'portal_top'},
+            'NarrowPassage': {'front': 'portal_back', 'back': 'portal_front'},
+            'WideCorridor': {'south': 'portal_south', 'north': 'portal_north'},
             # === ROOMS (all use has_entrance, some have additional portals) ===
             'Sanctuary': {'entrance': 'has_entrance'},
             'Tomb': {'entrance': 'has_entrance', 'exit': 'has_exit'},
@@ -1625,7 +1919,15 @@ class LayoutGenerator:
             'Ossuary': {'entrance': 'has_entrance'},
             'Cloister': {'entrance': 'has_entrance'},
             'Colosseum': {'entrance': 'has_entrance'},
+            'ThroneRoom': {'entrance': 'has_entrance'},
+            'Vestibule': {'entrance': 'has_entrance', 'exit': 'has_exit'},
+            'Processional': {'entrance': 'has_entrance', 'exit': 'has_exit'},
+            'DoglegRoom': {'entrance': 'has_entrance', 'exit': 'has_exit'},
             'Antechamber': {
+                'entrance': 'has_entrance', 'exit': 'has_exit',
+                'side_east': 'has_side_east', 'side_west': 'has_side_west'
+            },
+            'Hub': {
                 'entrance': 'has_entrance', 'exit': 'has_exit',
                 'side_east': 'has_side_east', 'side_west': 'has_side_west'
             },

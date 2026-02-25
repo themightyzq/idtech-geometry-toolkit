@@ -196,6 +196,22 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
             ),
         ]
     ),
+    'NarrowPassage': PrimitiveFootprint(
+        width_cells=1,
+        depth_cells=2,
+        portals=[
+            Portal(id='front', direction=PortalDirection.NORTH, cell_offset=CellCoord(0, 1)),
+            Portal(id='back', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
+        ]
+    ),
+    'WideCorridor': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=2,
+        portals=[
+            Portal(id='south', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+            Portal(id='north', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 1)),
+        ]
+    ),
 
     # ==========================================================================
     # ROOMS - Enclosed spaces with entrances
@@ -331,6 +347,16 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
             Portal(id='side_west', direction=PortalDirection.WEST, cell_offset=CellCoord(0, 0)),
         ]
     ),
+    'Hub': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+            Portal(id='exit', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 2)),
+            Portal(id='side_east', direction=PortalDirection.EAST, cell_offset=CellCoord(2, 1)),
+            Portal(id='side_west', direction=PortalDirection.WEST, cell_offset=CellCoord(0, 1)),
+        ]
+    ),
     # ==========================================================================
     # TEMPLATE-SPECIFIC ROOMS - Unique navigation patterns per template
     # ==========================================================================
@@ -367,6 +393,51 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
         depth_cells=4,
         portals=[
             Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
+    # ==========================================================================
+    # NEW ARCHETYPE ROOMS - Buffer, L-shaped, processional, focal destination
+    # ==========================================================================
+    'ThroneRoom': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
+    'Vestibule': PrimitiveFootprint(
+        width_cells=2,
+        depth_cells=1,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
+            Portal(id='exit', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 0)),
+        ]
+    ),
+    'Processional': PrimitiveFootprint(
+        width_cells=2,
+        depth_cells=4,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
+            Portal(id='exit', direction=PortalDirection.NORTH, cell_offset=CellCoord(1, 3)),
+        ]
+    ),
+    'DoglegRoom': PrimitiveFootprint(
+        width_cells=3,
+        depth_cells=3,
+        portals=[
+            Portal(id='entrance', direction=PortalDirection.SOUTH, cell_offset=CellCoord(1, 0)),
+            Portal(id='exit', direction=PortalDirection.EAST, cell_offset=CellCoord(2, 2)),
+        ]
+    ),
+    # ==========================================================================
+    # NEW HALL - Wide sweeping corner
+    # ==========================================================================
+    'WideCorner': PrimitiveFootprint(
+        width_cells=2,
+        depth_cells=2,
+        portals=[
+            Portal(id='a', direction=PortalDirection.SOUTH, cell_offset=CellCoord(0, 0)),
+            Portal(id='b', direction=PortalDirection.EAST, cell_offset=CellCoord(1, 1)),
         ]
     ),
     # ==========================================================================
@@ -510,14 +581,17 @@ PRIMITIVE_FOOTPRINTS: Dict[str, PrimitiveFootprint] = {
 # Only include primitives that can be connected via portals
 PRIMITIVE_CATEGORIES = {
     'Halls': [
-        'StraightHall', 'SquareCorner', 'TJunction', 'Crossroads',
+        'StraightHall', 'SquareCorner', 'WideCorner', 'TJunction', 'Crossroads',
+        'NarrowPassage', 'WideCorridor',
     ],
     'Rooms': [
-        # 23 rooms - now with optional upper portal support
+        # 28 rooms - now with optional upper portal support
         'Sanctuary', 'Tomb', 'Tower', 'Chamber', 'Storage',
         'GreatHall', 'Prison', 'Armory', 'Cistern', 'Stronghold', 'Courtyard',
         'Arena', 'Laboratory', 'Vault', 'Barracks', 'Shrine', 'Pit', 'Antechamber',
+        'Hub',
         'Gatehouse', 'Sewer', 'Ossuary', 'Cloister', 'Colosseum',
+        'ThroneRoom', 'Vestibule', 'Processional', 'DoglegRoom',
     ],
     'Multi-Floor Rooms': [
         # 8 rooms designed for vertical gameplay with upper portals

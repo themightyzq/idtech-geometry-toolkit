@@ -18,9 +18,10 @@ ARENA_TEMPLATE = GenerationTemplate(
     corridor_width=128,
 
     # Generation hints
-    preferred_room_types=['Colosseum', 'Arena', 'GreatHall', 'Stronghold', 'Pit', 'Chamber'],
-    preferred_hall_types=['Crossroads', 'Crossroads', 'TJunction', 'StraightHall'],
+    preferred_room_types=['Colosseum', 'Arena', 'GreatHall', 'Stronghold', 'Pit', 'Chamber', 'Hub', 'Processional', 'ThroneRoom'],
+    preferred_hall_types=['Crossroads', 'Crossroads', 'TJunction', 'WideCorridor', 'WideCorner', 'StraightHall'],
     room_probability=0.5,
     min_hall_between_rooms=1,
     allow_dead_ends=False,
+    max_shortcuts=3,
 )

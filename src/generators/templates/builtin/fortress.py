@@ -18,9 +18,10 @@ FORTRESS_TEMPLATE = GenerationTemplate(
     corridor_width=96,
 
     # Generation hints
-    preferred_room_types=['Stronghold', 'Gatehouse', 'Armory', 'Barracks', 'Prison', 'Vault'],
-    preferred_hall_types=['StraightHall', 'StraightHall', 'TJunction', 'SquareCorner'],
+    preferred_room_types=['Stronghold', 'Gatehouse', 'Armory', 'Barracks', 'Prison', 'Vault', 'Hub', 'DoglegRoom', 'ThroneRoom'],
+    preferred_hall_types=['StraightHall', 'StraightHall', 'TJunction', 'SquareCorner', 'WideCorner', 'WideCorridor'],
     room_probability=0.4,
     min_hall_between_rooms=2,
     allow_dead_ends=False,
+    max_shortcuts=2,
 )
