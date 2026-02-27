@@ -651,13 +651,53 @@ class PrimitiveButton(QToolButton):
         self.setFixedSize(80, 80)
         # NO setCheckable! We manage state manually to avoid macOS accessibility crash
 
-        # Add tooltip with footprint dimensions
+        # Add tooltip with footprint dimensions and portal details
         portal_count = len(self._footprint.portals)
         portal_text = f"{portal_count} portal{'s' if portal_count != 1 else ''}"
+
+        # Build portal direction summary
+        dir_arrows = {
+            PortalDirection.NORTH: 'N',
+            PortalDirection.SOUTH: 'S',
+            PortalDirection.EAST: 'E',
+            PortalDirection.WEST: 'W',
+        }
+        if self._footprint.portals:
+            portal_dirs = ', '.join(
+                f"{p.id}={dir_arrows.get(p.direction, '?')}"
+                for p in self._footprint.portals
+            )
+            portal_detail = f"{portal_text}: {portal_dirs}"
+        else:
+            portal_detail = "No portals"
+
+        # Build ASCII footprint diagram
+        w = self._footprint.width_cells
+        d = self._footprint.depth_cells
+        corridor = set()
+        if hasattr(self._footprint, 'portals'):
+            try:
+                corridor = set(get_corridor_cells(self._primitive_type, self._footprint))
+            except Exception:
+                corridor = set()
+
+        # Build grid rows (top-down: row d-1 first)
+        grid_lines = []
+        for row in range(d - 1, -1, -1):
+            line = ''
+            for col in range(w):
+                if (col, row) in corridor:
+                    line += '\u2593'  # dark shade = corridor
+                else:
+                    line += '\u2591'  # light shade = wall
+            grid_lines.append(line)
+        grid_str = '\n'.join(grid_lines)
+
         self.setToolTip(
             f"{self._primitive_type}\n"
-            f"Size: {self._footprint.width_cells}×{self._footprint.depth_cells} cells\n"
-            f"{portal_text}"
+            f"Size: {w}\u00d7{d} cells\n"
+            f"{portal_detail}\n"
+            f"{grid_str}"
         )
 
         # Apply initial style

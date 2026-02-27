@@ -11,6 +11,7 @@ Provides:
 
 from PyQt5.QtWidgets import (
     QGraphicsView, QGraphicsScene, QApplication, QMenu, QAction,
+    QLabel,
 )
 from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import (
@@ -92,6 +93,18 @@ class GridCanvas(QGraphicsView):
         # Floor filter (None = show all, or specific z_offset to highlight)
         self._floor_filter: Optional[float] = None
 
+        # Empty-state overlay
+        self._empty_hint = QLabel(
+            "Click a cell to place a module,\n"
+            "or use Random Dungeon above.",
+            self,
+        )
+        self._empty_hint.setAlignment(Qt.AlignCenter)
+        self._empty_hint.setStyleSheet(
+            "color: #777; font-size: 13pt; background: transparent; padding: 20px;"
+        )
+        self._empty_hint.setAttribute(Qt.WA_TransparentForMouseEvents)
+
         # Setup view
         self._setup_view()
 
@@ -138,6 +151,23 @@ class GridCanvas(QGraphicsView):
         self._rebuild_items()
         self._clear_selection()
 
+    def resizeEvent(self, event):
+        """Center the empty-state hint on resize."""
+        super().resizeEvent(event)
+        self._update_empty_hint()
+
+    def _update_empty_hint(self):
+        """Show or hide the empty-state hint based on layout content."""
+        has_content = bool(self._layout.primitives)
+        self._empty_hint.setVisible(not has_content)
+        if not has_content:
+            # Center in viewport
+            hint_size = self._empty_hint.sizeHint()
+            vp = self.viewport().size()
+            x = (vp.width() - hint_size.width()) // 2
+            y = (vp.height() - hint_size.height()) // 2
+            self._empty_hint.move(max(0, x), max(0, y))
+
     def _rebuild_items(self):
         """Rebuild all cell items from layout."""
         # Remove existing items
@@ -148,6 +178,8 @@ class GridCanvas(QGraphicsView):
         # Create items for all primitives
         for prim_id, prim in self._layout.primitives.items():
             self._add_cell_item(prim)
+
+        self._update_empty_hint()
 
     def _add_cell_item(self, prim: PlacedPrimitive):
         """Add a cell item for a primitive."""
@@ -1285,15 +1317,18 @@ class GridCanvas(QGraphicsView):
             self._calculate_flow_path()
             self.viewport().update()
 
-    def select_primitive(self, prim_id: str):
+    def select_primitive(self, prim_id: str, center_view: bool = True):
         """
         Public method to select a primitive by ID.
 
         Args:
             prim_id: The ID of the primitive to select.
+            center_view: If True, scroll the view to center on the selected primitive.
         """
         if prim_id in self._layout.primitives:
             self._select_item(prim_id)
+            if center_view and prim_id in self._cell_items:
+                self.centerOn(self._cell_items[prim_id])
 
     # ---------------------------------------------------------------
     # Context Menu for Connections

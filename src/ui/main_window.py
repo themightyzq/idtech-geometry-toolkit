@@ -277,7 +277,7 @@ class MainWindow(QMainWindow):
 
         self.export_map_btn = QPushButton(".map")
         self.export_map_btn.setEnabled(False)
-        self.export_map_btn.setToolTip("Export .map (Ctrl+E)")
+        self.export_map_btn.setToolTip("Generate a map first (click Build above)")
         set_accessible(self.export_map_btn, "Export MAP", "Export to MAP format")
         self.export_map_btn.setStyleSheet(f"""
             QPushButton {{ font-weight:bold; padding:4px 8px;
@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
 
         self.export_obj_btn = QPushButton(".obj")
         self.export_obj_btn.setEnabled(False)
-        self.export_obj_btn.setToolTip("Export .obj")
+        self.export_obj_btn.setToolTip("Generate a map first (click Build above)")
         set_accessible(self.export_obj_btn, "Export OBJ", "Export to OBJ format")
         self.export_obj_btn.setStyleSheet(f"""
             QPushButton {{ font-weight:bold; padding:4px 8px;
@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
 
         self.open_output_btn = QPushButton("Open")
         self.open_output_btn.setEnabled(False)
-        self.open_output_btn.setToolTip("Open output folder (Ctrl+O)")
+        self.open_output_btn.setToolTip("Export a map first, then open its folder")
         set_accessible(self.open_output_btn, "Open Folder", "Open output folder")
         export_btn_row.addWidget(self.open_output_btn)
 
@@ -764,6 +764,12 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
 
+        # Quick Start
+        self._quick_start_action = QAction("&Quick Start...", self)
+        self._quick_start_action.setToolTip("Show quick start tutorial")
+        self._quick_start_action.triggered.connect(self._show_quick_start)
+        help_menu.addAction(self._quick_start_action)
+
         # Keyboard Shortcuts
         self._shortcuts_action = QAction("&Keyboard Shortcuts...", self)
         self._shortcuts_action.setShortcut("F1")
@@ -1139,7 +1145,10 @@ class MainWindow(QMainWindow):
         self._notify_tab(2)
 
     def _on_validation_issue_clicked(self, primitive_id: str):
-        """Handle clicking on a validation issue - select the primitive."""
+        """Handle clicking on a validation issue - select and center on the primitive."""
+        # Ensure layout editor is visible (not quad view)
+        if self.mode_selector.current_mode() == "layout" and not self._quad_view_enabled:
+            self._center_stack.setCurrentIndex(0)
         self.layout_editor.select_primitive(primitive_id)
 
     def _on_right_tab_changed(self, index: int):
@@ -1561,6 +1570,9 @@ class MainWindow(QMainWindow):
             if self._quad_view_enabled and self._quad_view_widget.is_interactive():
                 self._quad_view_widget.set_layout(layout)
 
+            # Update default filename from template + seed
+            self._update_default_filename(actual_seed)
+
             # Auto-generate brushes so the user sees geometry immediately
             self._generate_from_layout()
 
@@ -1730,6 +1742,9 @@ class MainWindow(QMainWindow):
             self.export_obj_btn.setEnabled(True)
             self.export_obj_btn.setToolTip("Export to OBJ mesh format for Blender")
 
+            # Update default filename to module name
+            self.map_name_edit.setText(prim_name.lower())
+
             # Update preview
             self.preview_widget.update_primitive(prim_name, prim_params)
 
@@ -1745,6 +1760,18 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------
     # Export
     # ---------------------------------------------------------------
+
+    def _update_default_filename(self, seed=None):
+        """Update the filename field based on current template and seed."""
+        parts = []
+        template = self.layout_panel.get_current_template()
+        if template:
+            parts.append(template.name.lower().replace(' ', '_'))
+        if not parts:
+            parts.append('generated_map')
+        if seed is not None:
+            parts.append(str(seed))
+        self.map_name_edit.setText('_'.join(parts))
 
     def _on_export_map(self):
         """Export generated brushes to .map file."""
@@ -1803,7 +1830,13 @@ class MainWindow(QMainWindow):
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             writer = MapWriter(export_format=fmt)
-            worldspawn = writer.create_worldspawn()
+            # Select profile matching the export format for correct worldspawn defaults
+            from quake_levelgenerator.src.generators.profiles import PROFILE_CATALOG
+            if fmt == "idtech1":
+                export_profile = PROFILE_CATALOG.get_profile("Quake 1")
+            else:
+                export_profile = PROFILE_CATALOG.get_profile("Doom 3")
+            worldspawn = writer.create_worldspawn(profile=export_profile)
             writer.add_entity(worldspawn)
 
             for brush in self._generated_brushes:
@@ -2224,45 +2257,56 @@ class MainWindow(QMainWindow):
 
     def _show_onboarding(self):
         """Show first-run onboarding dialog."""
-        onboarding_text = """
-<h2>Welcome to idTech Geometry Toolkit!</h2>
+        self._show_quick_start()
 
-<p>This tool helps you create levels for idTech-based games (Quake, Doom 3, etc.).</p>
+    def _show_quick_start(self):
+        """Show quick-start tutorial dialog (accessible from Help menu too)."""
+        quick_start_text = """
+<h2>Quick Start Guide</h2>
 
-<h3>Getting Started</h3>
+<table cellpadding="6" style="margin: 8px 0;">
+<tr>
+<td style="vertical-align:top;"><b>Step 1</b></td>
+<td>Switch to <b>Layout Mode</b> (Ctrl+1) and pick a <b>Template</b> from the
+left panel (Arena, Fortress, Cathedral, Maze), or stay in <b>Module Mode</b>
+(Ctrl+2) to preview individual pieces.</td>
+</tr>
+<tr>
+<td style="vertical-align:top;"><b>Step 2</b></td>
+<td>Click <b>Random Dungeon</b> to auto-generate a layout, or click cells on
+the grid to place modules manually. Press <b>R</b> to rotate before placing.</td>
+</tr>
+<tr>
+<td style="vertical-align:top;"><b>Step 3</b></td>
+<td>Click <b>Build</b> (Ctrl+G) to generate sealed brush geometry.
+Preview it in 3D &mdash; use <b>WASD</b> + right-drag to fly around.</td>
+</tr>
+<tr>
+<td style="vertical-align:top;"><b>Step 4</b></td>
+<td>Click <b>.map</b> (Ctrl+E) to export. Choose idTech 1 (Quake) or
+idTech 4 (Doom 3) format, then open the file in TrenchBroom or Radiant.</td>
+</tr>
+</table>
 
-<p><b>1. Choose a Mode:</b></p>
-<ul>
-<li><b>Module Mode</b> - Create individual geometric pieces (arches, stairs, rooms)</li>
-<li><b>Layout Mode</b> - Design complete dungeons by connecting pieces on a 2D grid</li>
-</ul>
+<h3>Useful Shortcuts</h3>
+<table cellpadding="2">
+<tr><td><b>Ctrl+G</b></td><td>Build geometry</td>
+<td>&nbsp;&nbsp;</td>
+<td><b>Ctrl+R</b></td><td>Random dungeon</td></tr>
+<tr><td><b>Ctrl+E</b></td><td>Export .map</td>
+<td>&nbsp;&nbsp;</td>
+<td><b>Shift+Q</b></td><td>Quad view</td></tr>
+<tr><td><b>F1</b></td><td>Full help</td>
+<td>&nbsp;&nbsp;</td>
+<td><b>F</b></td><td>Fit to bounds</td></tr>
+</table>
 
-<p><b>2. Adjust Parameters:</b></p>
-<ul>
-<li>Use the left panel to modify dimensions, shapes, and features</li>
-<li>Changes preview in real-time in the 3D view</li>
-</ul>
-
-<p><b>3. Export Your Map:</b></p>
-<ul>
-<li>Click <b>Build Geometry</b> to prepare for export</li>
-<li>Click <b>Export .map</b> to save in idTech format</li>
-<li>Open in TrenchBroom or your preferred editor</li>
-</ul>
-
-<h3>Quick Tips</h3>
-<ul>
-<li>Press <b>F1</b> anytime for help and keyboard shortcuts</li>
-<li>Use <b>WASD</b> and <b>right-drag</b> to fly around the 3D preview</li>
-<li>In Layout Mode, press <b>R</b> to rotate pieces before placing</li>
-</ul>
-
-<p><i>This message won't show again. Press F1 for help anytime.</i></p>
+<p><i>Access this guide anytime via Help &gt; Quick Start.</i></p>
 """
         msg = QMessageBox(self)
-        msg.setWindowTitle("Welcome!")
+        msg.setWindowTitle("Quick Start")
         msg.setTextFormat(Qt.RichText)
-        msg.setText(onboarding_text)
+        msg.setText(quick_start_text)
         msg.setIcon(QMessageBox.Information)
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()

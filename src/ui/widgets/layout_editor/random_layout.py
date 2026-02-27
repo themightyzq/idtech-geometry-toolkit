@@ -477,13 +477,25 @@ def _select_room_type(
             return random.choice(valid_preferred)
 
     # Fall back to complexity-based selection
-    # Complexity 1-2: Simple rooms (small, no complex features)
-    # Complexity 3-4: Medium rooms (various types)
-    # Complexity 5: All room types including large/complex
-    if complexity <= 2:
+    # Complexity 1: Very simple (3 types)
+    # Complexity 2: Simple with storage/armory (6 types)
+    # Complexity 3: Medium with cistern/vault/lab/barracks (12 types)
+    # Complexity 4: Most rooms except multi-floor (20+ types)
+    # Complexity 5: All room types including large/complex/multi-floor
+    if complexity <= 1:
         choices = ['Tower', 'Storage', 'Chamber']
+    elif complexity <= 2:
+        choices = ['Tower', 'Storage', 'Chamber', 'Armory', 'Shrine', 'Pit']
+    elif complexity <= 3:
+        choices = [
+            'Tower', 'Chamber', 'Storage', 'Armory', 'Tomb', 'Shrine',
+            'Cistern', 'Vault', 'Laboratory', 'Barracks', 'Pit', 'Courtyard',
+        ]
     elif complexity <= 4:
-        choices = ['Tower', 'Chamber', 'Storage', 'Armory', 'Tomb', 'Shrine']
+        choices = [
+            r for r in ROOM_TYPES
+            if r not in MULTI_FLOOR_ROOM_TYPES
+        ]
     else:
         choices = ROOM_TYPES
 
@@ -529,10 +541,14 @@ def _select_hall_type(complexity: int, preferred: Optional[List[str]] = None,
         return random.choice(choices)
 
     # Fall back to complexity-based selection
-    if complexity <= 2:
+    if complexity <= 1:
         choices = ['StraightHall', 'StraightHall', 'SquareCorner', 'SquareCorner']
+    elif complexity <= 2:
+        choices = ['StraightHall', 'StraightHall', 'SquareCorner', 'SquareCorner', 'WideCorner']
+    elif complexity <= 3:
+        choices = ['StraightHall', 'SquareCorner', 'WideCorner', 'TJunction', 'NarrowPassage']
     elif complexity <= 4:
-        choices = ['StraightHall', 'SquareCorner', 'TJunction', 'SquareCorner']
+        choices = ['StraightHall', 'SquareCorner', 'WideCorner', 'TJunction', 'NarrowPassage', 'WideCorridor']
     else:
         choices = HALL_TYPES
     return random.choice(choices)

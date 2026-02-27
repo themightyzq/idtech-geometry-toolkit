@@ -1246,7 +1246,7 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
-            set_if_not_user('arena_pillars', 0)  # Disable pillars for cleaner geometry
+            # arena_pillars are interior-only (inside pit), safe in layout mode
 
         elif ptype == 'Laboratory':
             # Laboratory: workshop with tables and alcoves
@@ -1272,7 +1272,7 @@ class LayoutGenerator:
             # Room t=16: width = footprint/2 - t, length = footprint - 2*t
             set_if_not_user('width', (fp_width * grid_size) / 2 - 16)
             set_if_not_user('length', fp_depth * grid_size - 32)
-            set_if_not_user('bed_alcoves', 0)  # Disable alcoves in layout mode
+            # bed_alcoves are interior-only (inset 8u from walls), safe in layout mode
 
         elif ptype == 'Shrine':
             # Shrine: small worship space

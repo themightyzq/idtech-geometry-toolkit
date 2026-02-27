@@ -158,6 +158,7 @@ class PrimitivePanel(QWidget):
             return
 
         schema = cls.get_parameter_schema()
+        changed_params = []
 
         for key, spec in schema.items():
             widget = self._param_widgets.get(key)
@@ -165,6 +166,7 @@ class PrimitivePanel(QWidget):
                 continue
 
             ptype = spec.get("type", "float")
+            label = spec.get("label", key)
 
             if ptype == "float":
                 min_val = spec.get("min", 0)
@@ -178,12 +180,14 @@ class PrimitivePanel(QWidget):
                 else:
                     value = min_snapped
                 widget.setValue(float(value))
+                changed_params.append(label)
 
             elif ptype == "int":
                 min_val = int(spec.get("min", 0))
                 max_val = int(spec.get("max", 999))
                 # For counts (segments, sides), no snapping needed
                 widget.setValue(random.randint(min_val, max_val))
+                changed_params.append(label)
 
             elif ptype == "bool":
                 # Keep portal params enabled for usable geometry
@@ -191,12 +195,21 @@ class PrimitivePanel(QWidget):
                     widget.setChecked(True)
                 else:
                     widget.setChecked(random.choice([True, False]))
+                    changed_params.append(label)
 
             elif ptype == "choice":
                 choices = spec.get("choices", [])
                 if choices:
                     idx = random.randint(0, len(choices) - 1)
                     widget.setCurrentIndex(idx)
+                    changed_params.append(label)
+
+        # Show feedback about what was randomized
+        if changed_params:
+            summary = ', '.join(changed_params[:5])
+            if len(changed_params) > 5:
+                summary += f' (+{len(changed_params) - 5} more)'
+            self.validation_changed.emit(f"Randomized: {summary}", "ok")
 
         # Emit params changed to update preview
         self._emit_params()
