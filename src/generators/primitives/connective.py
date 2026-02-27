@@ -22,6 +22,7 @@ class Bridge(GeometricPrimitive):
     thickness: float = 16.0
     railing_height: float = 48.0
     railing: bool = True
+    has_supports: bool = True
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -54,6 +55,10 @@ class Bridge(GeometricPrimitive):
                 "type": "bool", "default": True, "label": "Add Railings",
                 "description": "Add protective side railings to prevent falling"
             },
+            "has_supports": {
+                "type": "bool", "default": True, "label": "Support Beams",
+                "description": "Add under-deck support beams running length of bridge"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -80,6 +85,21 @@ class Bridge(GeometricPrimitive):
                 ox + hw + rw, oy + self.span, oz + self.railing_height,
             ))
 
+        if self.has_supports:
+            beam_w = 8.0
+            beam_h = 16.0
+            beam_inset = hw * 0.3  # Beams at 30% from each edge
+            # Left beam
+            brushes.append(self._structural_box(
+                ox - beam_inset - beam_w / 2, oy, oz - self.thickness - beam_h,
+                ox - beam_inset + beam_w / 2, oy + self.span, oz - self.thickness,
+            ))
+            # Right beam
+            brushes.append(self._structural_box(
+                ox + beam_inset - beam_w / 2, oy, oz - self.thickness - beam_h,
+                ox + beam_inset + beam_w / 2, oy + self.span, oz - self.thickness,
+            ))
+
         return brushes
 
 
@@ -93,6 +113,7 @@ class Platform(GeometricPrimitive):
     platform_depth: float = 64.0
     thickness: float = 16.0
     railing_height: float = 48.0
+    has_brackets: bool = True
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -120,6 +141,10 @@ class Platform(GeometricPrimitive):
             "railing_height": {
                 "type": "float", "default": 48.0, "min": 16, "max": 96, "label": "Railing Height",
                 "description": "Height of protective railings on three sides"
+            },
+            "has_brackets": {
+                "type": "bool", "default": True, "label": "Support Brackets",
+                "description": "Add wedge support brackets underneath at front corners"
             },
         }
 
@@ -151,6 +176,22 @@ class Platform(GeometricPrimitive):
             ox + hw + rw, oy + self.platform_depth + rw, oz + self.railing_height,
         ))
 
+        if self.has_brackets:
+            bracket_size = 16.0
+            bracket_depth = min(32.0, self.platform_depth / 2)
+            # Left bracket (wedge underneath)
+            brushes.append(self._wedge(
+                ox - hw, oy + self.platform_depth - bracket_depth, oz - self.thickness - bracket_size,
+                ox - hw + bracket_size, oy + self.platform_depth, oz - self.thickness,
+                ramp_axis="y",
+            ))
+            # Right bracket (wedge underneath)
+            brushes.append(self._wedge(
+                ox + hw - bracket_size, oy + self.platform_depth - bracket_depth, oz - self.thickness - bracket_size,
+                ox + hw, oy + self.platform_depth, oz - self.thickness,
+                ramp_axis="y",
+            ))
+
         return brushes
 
 
@@ -176,6 +217,8 @@ class Rampart(GeometricPrimitive):
     inner_wall_height: float = 32.0 # Inner wall height
     outer_parapet: bool = True      # Outer defensive wall
     parapet_height: float = 48.0    # Outer parapet height
+    has_buttresses: bool = False
+    buttress_spacing: float = 64.0
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -220,6 +263,14 @@ class Rampart(GeometricPrimitive):
                 "type": "float", "default": 48.0, "min": 32, "max": 96, "label": "Parapet Height",
                 "description": "Height of the outer defensive parapet"
             },
+            "has_buttresses": {
+                "type": "bool", "default": False, "label": "Buttress Supports",
+                "description": "Add buttress supports projecting outward at regular intervals"
+            },
+            "buttress_spacing": {
+                "type": "float", "default": 64.0, "min": 32, "max": 128, "label": "Buttress Spacing",
+                "description": "Distance between buttress supports"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -255,6 +306,20 @@ class Rampart(GeometricPrimitive):
                 ox + hw + wall_t, oy + self.length, oz + self.height + self.parapet_height
             ))
 
+        if self.has_buttresses:
+            butt_w = 16.0
+            butt_depth = 16.0
+            num_buttresses = max(1, int(self.length / self.buttress_spacing))
+            for i in range(num_buttresses + 1):
+                by = oy + i * self.buttress_spacing
+                if by + butt_w > oy + self.length:
+                    break
+                # Buttress projecting outward on +X side (beyond parapet)
+                brushes.append(self._structural_box(
+                    ox + hw + wall_t, by, oz,
+                    ox + hw + wall_t + butt_depth, by + butt_w, oz + self.height,
+                ))
+
         return brushes
 
 
@@ -280,6 +345,7 @@ class Gallery(GeometricPrimitive):
     column_width: float = 16.0  # Width of columns between arches
     back_wall: bool = True      # Solid wall on back side
     ceiling: bool = True        # Add ceiling (can disable for open-air)
+    has_column_details: bool = True
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -323,6 +389,10 @@ class Gallery(GeometricPrimitive):
             "ceiling": {
                 "type": "bool", "default": True, "label": "Ceiling",
                 "description": "Add ceiling (disable for open-air colonnade)"
+            },
+            "has_column_details": {
+                "type": "bool", "default": True, "label": "Column Details",
+                "description": "Add base and capital detail to each column"
             },
         }
 
@@ -393,5 +463,26 @@ class Gallery(GeometricPrimitive):
             ox - col_w, oy + self.length, oz,
             ox + self.gallery_width + wall_t, oy + self.length + wall_t, oz + self.height
         ))
+
+        if self.has_column_details:
+            detail_h = 8.0
+            detail_extra = 4.0
+            # Collect column Y positions
+            col_positions = [oy]
+            for i in range(self.arch_count):
+                arch_y_end = oy + (i + 1) * arch_spacing
+                col_positions.append(arch_y_end - col_w)
+
+            for col_y in col_positions:
+                # Column base (wider, 8u tall)
+                brushes.append(self._structural_box(
+                    ox - col_w - detail_extra, col_y - detail_extra, oz,
+                    ox + detail_extra, col_y + col_w + detail_extra, oz + detail_h,
+                ))
+                # Column capital (wider, 8u tall at top)
+                brushes.append(self._structural_box(
+                    ox - col_w - detail_extra, col_y - detail_extra, oz + self.height - detail_h,
+                    ox + detail_extra, col_y + col_w + detail_extra, oz + self.height,
+                ))
 
         return brushes

@@ -350,6 +350,169 @@ SAFE_RANDOMIZABLE_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
     'WideCorridor': {
         'random_seed': {'type': 'int', 'min': 1, 'max': 999999},
     },
+
+    # ==========================================================================
+    # PROPS (decorative elements — all params are interior/visual only)
+    # ==========================================================================
+    'Barrel': {
+        'band_count': {'type': 'int', 'min': 0, 'max': 6},
+        'band_height': {'type': 'float', 'min': 1, 'max': 16},
+        'band_width': {'type': 'float', 'min': 1, 'max': 16},
+    },
+
+    'Crate': {
+        'has_bands': {'type': 'bool'},
+        'band_overhang': {'type': 'float', 'min': 1, 'max': 8},
+        'band_height': {'type': 'float', 'min': 1, 'max': 16},
+        'lid_overhang': {'type': 'float', 'min': 1, 'max': 8},
+    },
+
+    'Table': {
+        'has_apron': {'type': 'bool'},
+        'apron_height': {'type': 'float', 'min': 4, 'max': 16},
+    },
+
+    'Sarcophagus': {
+        'has_rim': {'type': 'bool'},
+        'plinth_overhang': {'type': 'float', 'min': 4, 'max': 16},
+        'rim_height': {'type': 'float', 'min': 2, 'max': 16},
+        'rim_overhang': {'type': 'float', 'min': 1, 'max': 8},
+        'lid_thickness': {'type': 'float', 'min': 4, 'max': 16},
+        'lid_overhang': {'type': 'float', 'min': 1, 'max': 8},
+    },
+
+    'Pedestal': {
+        'base_height': {'type': 'float', 'min': 4, 'max': 16},
+        'platform_height': {'type': 'float', 'min': 4, 'max': 16},
+        'transition_height': {'type': 'float', 'min': 4, 'max': 16},
+    },
+
+    'Brazier': {
+        'base_height': {'type': 'float', 'min': 4, 'max': 16},
+        'collar_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'collar_height': {'type': 'float', 'min': 4, 'max': 16},
+        'leg_width': {'type': 'float', 'min': 4, 'max': 12},
+        'chain_width': {'type': 'float', 'min': 4, 'max': 12},
+        'link_height': {'type': 'float', 'min': 8, 'max': 16},
+        'link_gap': {'type': 'float', 'min': 2, 'max': 8},
+    },
+
+    'Throne': {
+        'has_visible_legs': {'type': 'bool'},
+        'back_thickness': {'type': 'float', 'min': 4, 'max': 16},
+        'arm_width': {'type': 'float', 'min': 4, 'max': 12},
+        'platform_height': {'type': 'float', 'min': 4, 'max': 16},
+        'platform_overhang': {'type': 'float', 'min': 8, 'max': 24},
+        'platform_steps': {'type': 'int', 'min': 1, 'max': 3},
+        'leg_width': {'type': 'float', 'min': 4, 'max': 12},
+        'crown_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'crown_height': {'type': 'float', 'min': 4, 'max': 16},
+        'has_finials': {'type': 'bool'},
+        'finial_width': {'type': 'float', 'min': 4, 'max': 12},
+        'finial_height': {'type': 'float', 'min': 8, 'max': 24},
+    },
+
+    'Altar': {
+        'has_pinnacles': {'type': 'bool'},
+        'top_thickness': {'type': 'float', 'min': 4, 'max': 16},
+        'step_height': {'type': 'float', 'min': 4, 'max': 16},
+        'step_depth': {'type': 'float', 'min': 8, 'max': 24},
+        'top_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'reredos_thickness': {'type': 'float', 'min': 4, 'max': 16},
+        'pinnacle_width': {'type': 'float', 'min': 4, 'max': 12},
+        'pinnacle_height': {'type': 'float', 'min': 8, 'max': 24},
+    },
+
+    'Fountain': {
+        'has_basin_floor': {'type': 'bool'},
+        'has_column_cap': {'type': 'bool'},
+        'base_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'base_height': {'type': 'float', 'min': 4, 'max': 16},
+        'floor_thickness': {'type': 'float', 'min': 4, 'max': 12},
+        'cap_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'cap_height': {'type': 'float', 'min': 4, 'max': 12},
+    },
+
+    'Well': {
+        'has_rim': {'type': 'bool'},
+        'rim_height': {'type': 'float', 'min': 4, 'max': 16},
+        'rim_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'post_width': {'type': 'float', 'min': 4, 'max': 12},
+        'roof_overhang': {'type': 'float', 'min': 4, 'max': 16},
+    },
+
+    'Bookshelf': {
+        'has_molding': {'type': 'bool'},
+        'book_width': {'type': 'float', 'min': 4, 'max': 12},
+        'molding_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'molding_height': {'type': 'float', 'min': 4, 'max': 16},
+    },
+
+    'WeaponRack': {
+        'panel_thickness': {'type': 'float', 'min': 4, 'max': 12},
+        'peg_width': {'type': 'float', 'min': 4, 'max': 12},
+        'peg_height': {'type': 'float', 'min': 4, 'max': 12},
+        'rail_height': {'type': 'float', 'min': 4, 'max': 12},
+        'base_height': {'type': 'float', 'min': 4, 'max': 12},
+    },
+
+    'TorchSconce': {
+        'has_torch': {'type': 'bool'},
+        'cup_overhang': {'type': 'float', 'min': 2, 'max': 8},
+        'cup_height': {'type': 'float', 'min': 4, 'max': 12},
+        'base_height': {'type': 'float', 'min': 4, 'max': 12},
+    },
+
+    'Cage': {
+        'has_top_cross': {'type': 'bool'},
+        'chain_width': {'type': 'float', 'min': 4, 'max': 12},
+        'chain_height': {'type': 'float', 'min': 16, 'max': 48},
+        'ring_size': {'type': 'float', 'min': 8, 'max': 24},
+    },
+
+    # ==========================================================================
+    # STRUCTURAL ELEMENTS (decorative detail params only)
+    # ==========================================================================
+    'Arch': {
+        'has_imposts': {'type': 'bool'},
+    },
+
+    'StraightStaircase': {
+        'has_stringer': {'type': 'bool'},
+    },
+
+    'SpiralStaircase': {
+        'has_landings': {'type': 'bool'},
+    },
+
+    'Buttress': {
+        'has_weathering': {'type': 'bool'},
+    },
+
+    'Battlement': {
+        'has_caps': {'type': 'bool'},
+        'has_sills': {'type': 'bool'},
+    },
+
+    # ==========================================================================
+    # CONNECTIVE ELEMENTS (decorative detail params only)
+    # ==========================================================================
+    'Bridge': {
+        'has_supports': {'type': 'bool'},
+    },
+
+    'Platform': {
+        'has_brackets': {'type': 'bool'},
+    },
+
+    'Rampart': {
+        'has_buttresses': {'type': 'bool'},
+        'buttress_spacing': {'type': 'float', 'min': 48, 'max': 128},
+    },
+
+    'Gallery': {
+        'has_column_details': {'type': 'bool'},
+    },
 }
 
 # Parameters that must NEVER be randomized (safety check)

@@ -23,6 +23,7 @@ class StraightStaircase(GeometricPrimitive):
     height: float = 128.0
     step_height: float = 16.0
     railing: bool = False
+    has_stringer: bool = False
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -54,6 +55,10 @@ class StraightStaircase(GeometricPrimitive):
             "railing": {
                 "type": "bool", "default": False, "label": "Add Railings",
                 "description": "Add protective railings on both sides of the staircase"
+            },
+            "has_stringer": {
+                "type": "bool", "default": False, "label": "Side Stringers",
+                "description": "Add diagonal side panels enclosing the staircase"
             },
         }
 
@@ -89,6 +94,22 @@ class StraightStaircase(GeometricPrimitive):
                             rx, sy, sz,
                             rx + rail_w, sy + step_depth, sz + self.step_height + 48,
                         ))
+
+        if self.has_stringer:
+            stringer_w = 8.0
+            # Left stringer (wedge from bottom to top)
+            brushes.append(self._wedge(
+                ox - self.width / 2 - stringer_w, oy, oz,
+                ox - self.width / 2, oy + self.length, oz + self.height,
+                ramp_axis="y",
+            ))
+            # Right stringer (wedge from bottom to top)
+            brushes.append(self._wedge(
+                ox + self.width / 2, oy, oz,
+                ox + self.width / 2 + stringer_w, oy + self.length, oz + self.height,
+                ramp_axis="y",
+            ))
+
         return brushes
 
 
@@ -109,6 +130,7 @@ class Arch(GeometricPrimitive):
     segments: int = 8
     thickness: float = 16.0
     flat_top: bool = False      # If True, adds lintel above for wall integration
+    has_imposts: bool = True    # Wider blocks at spring line and base of jambs
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -149,6 +171,10 @@ class Arch(GeometricPrimitive):
                 "type": "bool", "default": False, "label": "Flat Top (for walls)",
                 "description": "Add lintel and spandrel fills for integration into rectangular walls"
             },
+            "has_imposts": {
+                "type": "bool", "default": True, "label": "Impost Blocks",
+                "description": "Add wider blocks at spring line and base of jambs"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -178,6 +204,31 @@ class Arch(GeometricPrimitive):
             ox + hw, oy - self.depth / 2, oz,
             ox + hw + self.thickness, oy + self.depth / 2, spring_z,
         ))
+
+        # Impost blocks at spring line and plinths at base of jambs
+        if self.has_imposts:
+            impost_extra = 4.0
+            impost_h = 8.0
+            # Left impost (spring line)
+            brushes.append(self._structural_box(
+                ox - hw - self.thickness - impost_extra, oy - self.depth / 2, spring_z,
+                ox - hw + impost_extra, oy + self.depth / 2, spring_z + impost_h,
+            ))
+            # Right impost (spring line)
+            brushes.append(self._structural_box(
+                ox + hw - impost_extra, oy - self.depth / 2, spring_z,
+                ox + hw + self.thickness + impost_extra, oy + self.depth / 2, spring_z + impost_h,
+            ))
+            # Left plinth (base)
+            brushes.append(self._structural_box(
+                ox - hw - self.thickness - impost_extra, oy - self.depth / 2, oz,
+                ox - hw + impost_extra, oy + self.depth / 2, oz + impost_h,
+            ))
+            # Right plinth (base)
+            brushes.append(self._structural_box(
+                ox + hw - impost_extra, oy - self.depth / 2, oz,
+                ox + hw + self.thickness + impost_extra, oy + self.depth / 2, oz + impost_h,
+            ))
 
         # Generate arch curve as voussoir segments
         # Angles from 0 (right horizontal) to pi (left horizontal)
@@ -625,9 +676,17 @@ class Pillar(GeometricPrimitive):
         body_bottom = oz
         if self.base_plinth and effective_base_height >= self.MIN_ORNAMENT_HEIGHT:
             base_radius = hw * self.base_width_ratio
+            # Lower tier (wider, 60% of base height)
+            lower_h = self._snap_coord(effective_base_height * 0.6)
             brushes.extend(self._generate_polygonal_solid(
-                ox, oy, oz, oz + effective_base_height,
+                ox, oy, oz, oz + lower_h,
                 base_radius, effective_sides, texture=self.texture_structural
+            ))
+            # Upper tier (intermediate radius, remaining height)
+            upper_base_r = self._snap_coord(hw * (1.0 + (self.base_width_ratio - 1.0) * 0.5))
+            brushes.extend(self._generate_polygonal_solid(
+                ox, oy, oz + lower_h, oz + effective_base_height,
+                upper_base_r, effective_sides, texture=self.texture_structural
             ))
             body_bottom = oz + effective_base_height
 
@@ -674,8 +733,16 @@ class Pillar(GeometricPrimitive):
         # =====================================================================
         if self.capital and not self.ruined and effective_capital_height >= self.MIN_ORNAMENT_HEIGHT:
             capital_radius = hw * self.capital_width_ratio
+            # Lower tier (transition, 40% of capital height)
+            lower_cap_h = self._snap_coord(effective_capital_height * 0.4)
+            trans_r = self._snap_coord(hw * (1.0 + (self.capital_width_ratio - 1.0) * 0.5))
             brushes.extend(self._generate_polygonal_solid(
-                ox, oy, body_top, body_top + effective_capital_height,
+                ox, oy, body_top, body_top + lower_cap_h,
+                trans_r, effective_sides, texture=self.texture_structural
+            ))
+            # Upper tier (abacus, wider, remaining height)
+            brushes.extend(self._generate_polygonal_solid(
+                ox, oy, body_top + lower_cap_h, body_top + effective_capital_height,
                 capital_radius, effective_sides, texture=self.texture_structural
             ))
 
@@ -817,6 +884,7 @@ class Buttress(GeometricPrimitive):
     taper: float = 0.3          # Top narrowing ratio (0-0.5)
     stepped: bool = False       # Stepped profile vs smooth
     step_count: int = 3         # Steps if stepped=True
+    has_weathering: bool = True # Sloped caps at step/taper transitions
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -853,6 +921,10 @@ class Buttress(GeometricPrimitive):
                 "type": "int", "default": 3, "min": 2, "max": 6, "label": "Step Count",
                 "description": "Number of steps when using stepped profile"
             },
+            "has_weathering": {
+                "type": "bool", "default": True, "label": "Weathering Caps",
+                "description": "Add sloped caps at step/taper transitions"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -877,6 +949,24 @@ class Buttress(GeometricPrimitive):
                     ox - step_width, oy, step_z1,
                     ox + step_width, oy + step_depth, step_z2
                 ))
+
+            # Weathering cap wedges at each step transition
+            if self.has_weathering:
+                for i in range(self.step_count - 1):
+                    step_taper = (i / self.step_count) * self.taper
+                    next_taper = ((i + 1) / self.step_count) * self.taper
+                    step_depth = self.depth * (1.0 - step_taper)
+                    next_depth = self.depth * (1.0 - next_taper)
+                    step_z2 = oz + (i + 1) * step_h
+                    # Weathering cap: wedge from current step depth to next step depth
+                    depth_diff = step_depth - next_depth
+                    if depth_diff >= 8:
+                        step_width_cur = hw * (1.0 - step_taper)
+                        brushes.append(self._wedge(
+                            ox - step_width_cur, oy + next_depth, step_z2,
+                            ox + step_width_cur, oy + step_depth, step_z2 + 8,
+                            ramp_axis="y",
+                        ))
         else:
             # Generate tapered profile with two sections
             top_hw = hw * (1.0 - self.taper)
@@ -895,6 +985,16 @@ class Buttress(GeometricPrimitive):
                 ox - top_hw, oy, mid_z,
                 ox + top_hw, oy + top_depth, oz + self.height
             ))
+
+            # Single weathering cap at the mid transition
+            if self.has_weathering:
+                depth_diff = self.depth - top_depth
+                if depth_diff >= 8:
+                    brushes.append(self._wedge(
+                        ox - top_hw, oy + top_depth, mid_z,
+                        ox + top_hw, oy + self.depth, mid_z + 8,
+                        ramp_axis="y",
+                    ))
 
         return brushes
 
@@ -917,6 +1017,8 @@ class Battlement(GeometricPrimitive):
     crenel_width: float = 24.0  # Width of gaps
     thickness: float = 16.0     # Wall thickness
     base_height: float = 16.0   # Height of base wall
+    has_caps: bool = True       # Wider capstone on top of each merlon
+    has_sills: bool = True      # Thin slab at bottom of each crenel gap
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -953,6 +1055,14 @@ class Battlement(GeometricPrimitive):
                 "type": "float", "default": 16.0, "min": 8, "max": 32, "label": "Base Height",
                 "description": "Height of the continuous base wall below merlons"
             },
+            "has_caps": {
+                "type": "bool", "default": True, "label": "Merlon Caps",
+                "description": "Add wider capstone on top of each merlon"
+            },
+            "has_sills": {
+                "type": "bool", "default": True, "label": "Crenel Sills",
+                "description": "Add thin slab at bottom of each gap"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -976,6 +1086,24 @@ class Battlement(GeometricPrimitive):
                 ox - self.thickness / 2, y, oz + self.base_height,
                 ox + self.thickness / 2, y + self.merlon_width, oz + self.base_height + self.merlon_height
             ))
+            # Cap on merlon
+            if self.has_caps:
+                cap_extra = 2.0
+                cap_h = 8.0
+                merlon_top = oz + self.base_height + self.merlon_height
+                brushes.append(self._structural_box(
+                    ox - self.thickness / 2 - cap_extra, y, merlon_top,
+                    ox + self.thickness / 2 + cap_extra, y + self.merlon_width, merlon_top + cap_h,
+                ))
+            # Sill in crenel gap
+            if self.has_sills:
+                sill_h = 8.0
+                sill_y = y + self.merlon_width
+                if sill_y + self.crenel_width <= oy + self.length:
+                    brushes.append(self._structural_box(
+                        ox - self.thickness / 2, sill_y, oz + self.base_height,
+                        ox + self.thickness / 2, sill_y + self.crenel_width, oz + self.base_height + sill_h,
+                    ))
             y += self.merlon_width + self.crenel_width
 
         # Final merlon if there's room
@@ -984,6 +1112,15 @@ class Battlement(GeometricPrimitive):
                 ox - self.thickness / 2, y, oz + self.base_height,
                 ox + self.thickness / 2, y + self.merlon_width, oz + self.base_height + self.merlon_height
             ))
+            # Cap on final merlon
+            if self.has_caps:
+                cap_extra = 2.0
+                cap_h = 8.0
+                merlon_top = oz + self.base_height + self.merlon_height
+                brushes.append(self._structural_box(
+                    ox - self.thickness / 2 - cap_extra, y, merlon_top,
+                    ox + self.thickness / 2 + cap_extra, y + self.merlon_width, merlon_top + cap_h,
+                ))
 
         return brushes
 
@@ -1025,6 +1162,7 @@ class SpiralStaircase(GeometricPrimitive):
     pillar_angle: float = 0.0     # Rotation of pillar in degrees (align with spiral)
     outer_wall: bool = False      # Optional outer cylindrical wall
     curve_segments: int = 8       # Angular segments per rotation (4=square, 8=octagon)
+    has_landings: bool = True     # Flat platforms at top and bottom of spiral
 
     @classmethod
     def get_display_name(cls) -> str:
@@ -1089,6 +1227,10 @@ class SpiralStaircase(GeometricPrimitive):
                 "description": "Angular segments per rotation. 4=square, 6=hex, 8=octagon (default), "
                               "16+=smoother. Lower values create more angular/polygonal spirals."
             },
+            "has_landings": {
+                "type": "bool", "default": True, "label": "Landing Platforms",
+                "description": "Add flat platforms at top and bottom of spiral"
+            },
         }
 
     def generate(self) -> List[Brush]:
@@ -1152,6 +1294,32 @@ class SpiralStaircase(GeometricPrimitive):
                 start_angle, end_angle
             )
             brushes.append(step_brush)
+
+        # Landing platforms at top and bottom of spiral
+        if self.has_landings:
+            landing_h = actual_step_h
+            # Bottom landing (at start angle)
+            start_angle_land = 0.0
+            end_angle_land = direction * angle_per_step * 2
+            if direction < 0:
+                start_angle_land, end_angle_land = end_angle_land, start_angle_land
+            brushes.append(self._radial_segment(
+                ox, oy, oz - landing_h, oz,
+                inner_r, outer_r,
+                start_angle_land, end_angle_land,
+                texture=self.texture_structural,
+            ))
+            # Top landing (at end angle)
+            top_start = total_angle * direction - direction * angle_per_step
+            top_end = total_angle * direction + direction * angle_per_step
+            if direction < 0:
+                top_start, top_end = top_end, top_start
+            brushes.append(self._radial_segment(
+                ox, oy, oz + self.total_height, oz + self.total_height + landing_h,
+                inner_r, outer_r,
+                top_start, top_end,
+                texture=self.texture_structural,
+            ))
 
         # Center pillar (highly recommended for gameplay)
         if self.center_pillar:

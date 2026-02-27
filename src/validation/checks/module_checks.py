@@ -164,9 +164,12 @@ def validate_module_contract(
                 continue
 
             # Run geometry validation on generated brushes
+            # Open modules (Structural, Connective) use 1u minimum; rooms/halls use 8u
+            min_brush = 1.0 if is_open_module else 8.0
             geom_result = validate_brushes(
                 brushes,
-                location_prefix=f"{module_name}@{rotation}° Brush"
+                location_prefix=f"{module_name}@{rotation}° Brush",
+                min_size=min_brush,
             )
             result.merge(geom_result)
 

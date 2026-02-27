@@ -11,6 +11,11 @@ from typing import Dict, List, Optional, Type
 
 from .base import GeometricPrimitive
 from .structural import StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement
+from .props import (
+    Crate, Barrel, Table, Sarcophagus, Throne, Altar,
+    Bookshelf, Brazier, Well, Cage, WeaponRack, Pedestal,
+    TorchSconce, Fountain,
+)
 from .rooms import (
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
     Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
@@ -126,6 +131,9 @@ PRIMITIVE_CATALOG = PrimitiveCatalog()
 
 for _cls in [
     StraightStaircase, SpiralStaircase, Arch, Pillar, Buttress, Battlement,
+    Crate, Barrel, Table, Sarcophagus, Throne, Altar,
+    Bookshelf, Brazier, Well, Cage, WeaponRack, Pedestal,
+    TorchSconce, Fountain,
     Sanctuary, Tomb, Tower, Chamber, Storage, GreatHall, Prison, Armory, Cistern, Stronghold, Courtyard,
     Arena, Laboratory, Vault, Barracks, Shrine, Pit, Antechamber,
     Amphitheater, CatwalkChamber, BalconyRoom, SunkenChamber, LibraryArchive, Grotto, RadialShrine, Forge,

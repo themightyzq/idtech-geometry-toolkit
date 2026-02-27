@@ -88,10 +88,10 @@ GEOM_003 = ValidationRule(
 GEOM_004 = ValidationRule(
     code="GEOM-004",
     severity=Severity.FAIL,
-    rule_reference="CLAUDE.md Section 6.1 - MUST NOT recommend brushes <8 units on any axis",
-    message_template="Brush dimension {axis}={size} is less than 8 units",
-    remediation_template="Increase {axis} dimension to at least 8 units",
-    description="All brush dimensions must be at least 8 units"
+    rule_reference="CLAUDE.md Section 6.1 - Brush dimensions must meet category minimum",
+    message_template="Brush dimension {axis}={size} is below minimum",
+    remediation_template="Increase {axis} dimension to meet category minimum (8u rooms/halls, 1u props/structural/connective)",
+    description="Brush dimensions must meet category minimum (8u rooms/halls, 1u props/structural/connective)"
 )
 
 GEOM_005 = ValidationRule(

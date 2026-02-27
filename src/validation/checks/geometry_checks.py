@@ -214,7 +214,7 @@ def validate_plane_geometry(
     return issues
 
 
-def validate_brushes(brushes: List, location_prefix: str = "Brush") -> ValidationResult:
+def validate_brushes(brushes: List, location_prefix: str = "Brush", min_size: float = 8.0) -> ValidationResult:
     """Validate all brushes for geometry issues.
 
     Runs all geometry checks on each brush:
@@ -257,7 +257,7 @@ def validate_brushes(brushes: List, location_prefix: str = "Brush") -> Validatio
                 result.add_issue(issue)
 
         # Check brush dimensions (GEOM-004)
-        dim_issues = check_brush_dimensions(brush, brush_loc)
+        dim_issues = check_brush_dimensions(brush, brush_loc, min_size=min_size)
         for issue in dim_issues:
             result.add_issue(issue)
 
